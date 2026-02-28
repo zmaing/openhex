@@ -648,8 +648,7 @@ class HexView(QTableView):
         self._block_start_col = -1
 
         # Column selection state
-        self._column_byte_pos = -1
-        self._block_start_byte_pos = -1  # Store start byte position for block/continuous selection  # Byte position for column selection
+        self._column_byte_pos = -1  # Byte position for column selection
 
         # Setup model and delegate
         self._model = HexTableModel(self)
@@ -763,69 +762,6 @@ class HexView(QTableView):
 
         menu.exec(self.viewport().mapToGlobal(pos))
 
-    def _calculate_byte_offset(self, row: int, column: int, x_pos: int = 0) -> int:
-        """Calculate byte offset from table row/column and optional x position.
-        
-        Args:
-            row: Table row index
-            column: Table column index (0 = hex, 1 = ascii)
-            x_pos: Optional x position within cell for more precise calculation
-            
-        Returns:
-            Byte offset in file
-        """
-        bytes_per_row = self._model._bytes_per_row
-        header_length = self._model._header_length
-        
-        if self._model._arrangement_mode == "header_length":
-            # For header length mode, calculate offset using model
-            row_offset = self._model._get_row_offset(row)
-        else:
-            row_offset = row * bytes_per_row
-            
-        # Add header length if present
-        row_offset += header_length
-        
-        return row_offset
-
-    def _calculate_column_byte_pos(self, x_pos: int, bytes_per_row: int) -> int:
-        """Calculate byte position within a row from x position.
-        
-        Args:
-            x_pos: X position in the hex column
-            bytes_per_row: Number of bytes per row
-            
-        Returns:
-            Byte position (0-based index within row)
-        """
-        col_width = self.columnWidth(0)
-        if col_width <= 0:
-            return 0
-            
-        # Calculate character width based on column layout
-        # Format: "00000000  AA BB CC ..." 
-        # Offset: 8 chars + 2 spaces = 10 chars
-        # Each byte: 3 chars (2 hex + 1 space)
-        offset_chars = 10
-        hex_section_width = col_width - (offset_chars * self._font_width)
-        
-        if hex_section_width <= 0:
-            # Fallback: use simple calculation
-            char_width = col_width / (offset_chars + bytes_per_row * 3)
-            byte_pos = int((x_pos / char_width - offset_chars) / 3)
-        else:
-            # More accurate calculation
-            byte_char_width = hex_section_width / bytes_per_row
-            x_in_hex = x_pos - (offset_chars * self._font_width)
-            
-            if x_in_hex < 0:
-                byte_pos = 0
-            else:
-                byte_pos = int(x_in_hex / byte_char_width)
-        
-        # Clamp to valid range
-        return max(0, min(byte_pos, bytes_per_row - 1))
-
     def _on_selection_changed(self, selected, deselected):
         """Handle selection changed to update highlight based on selection mode."""
         selection = self.selectionModel().selection()
@@ -837,40 +773,17 @@ class HexView(QTableView):
             return
 
         bytes_per_row = self._model._bytes_per_row
-        header_length = self._model._header_length
         file_size = self._model._file_size
-        arrangement_mode = self._model._arrangement_mode
 
         if self._selection_mode == self.SELECTION_ROW:
             # Row selection: select all bytes in each selected row
             rows = sorted(set(idx.row() for idx in indexes))
             ranges = []
             for row in rows:
-                if arrangement_mode == "header_length":
-                    row_offset = self._model._get_row_offset(row)
-                    # Get actual data length for this row
-                    if row_offset >= file_size:
-                        continue
-                    header_len = min(header_length, file_size - row_offset)
-                    if header_len > 0:
-                        header_bytes = self._model._data[row_offset:row_offset + header_len]
-                        try:
-                            data_len = int.from_bytes(header_bytes, byteorder='big')
-                        except:
-                            data_len = 0
-                        if data_len == 0:
-                            data_len = 1
-                        start = row_offset + header_length
-                        end = min(start + data_len - 1, file_size - 1)
-                    else:
-                        continue
-                else:
-                    start = row * bytes_per_row
-                    end = min(start + bytes_per_row - 1, file_size - 1)
-                
+                start = row * bytes_per_row
+                end = min(start + bytes_per_row - 1, file_size - 1)
                 if end >= start:
                     ranges.append((start, end))
-            
             self._model.set_selection_ranges(ranges)
 
             # Emit signal with first range
@@ -891,36 +804,11 @@ class HexView(QTableView):
 
             # Select this byte position across all rows
             ranges = []
-            
-            if arrangement_mode == "header_length":
-                # For header length mode, iterate through rows
-                for row in range(self._model.rowCount()):
-                    row_offset = self._model._get_row_offset(row)
-                    if row_offset >= file_size:
-                        break
-                    # Get data length for this row
-                    header_len = min(header_length, file_size - row_offset)
-                    if header_len > 0:
-                        header_bytes = self._model._data[row_offset:row_offset + header_len]
-                        try:
-                            data_len = int.from_bytes(header_bytes, byteorder='big')
-                        except:
-                            data_len = 0
-                        if data_len == 0:
-                            data_len = 1
-                        
-                        # Check if byte_pos is within this row's data
-                        if byte_pos < data_len:
-                            start = row_offset + header_length + byte_pos
-                            if start < file_size:
-                                ranges.append((start, start))
-            else:
-                # Equal frame mode
-                total_rows = (file_size + bytes_per_row - 1) // bytes_per_row
-                for r in range(total_rows):
-                    start = r * bytes_per_row + byte_pos
-                    if start < file_size:
-                        ranges.append((start, start))
+            total_rows = (file_size + bytes_per_row - 1) // bytes_per_row
+            for r in range(total_rows):
+                start = r * bytes_per_row + byte_pos
+                if start < file_size:
+                    ranges.append((start, start))
 
             self._model.set_selection_ranges(ranges)
 
@@ -931,158 +819,55 @@ class HexView(QTableView):
 
         elif self._selection_mode == self.SELECTION_BLOCK:
             # Block selection: calculate ranges for each row in the block
-            if not indexes:
-                self._model.clear_selection_highlight()
-                self.selection_changed.emit(-1, -1)
-                return
-                
-            rows = sorted(set(idx.row() for idx in indexes))
-            cols = sorted(set(idx.column() for idx in indexes))
-            
-            if not rows or not cols:
-                self._model.clear_selection_highlight()
-                self.selection_changed.emit(-1, -1)
-                return
-            
+            rows = [idx.row() for idx in indexes]
+            cols = [idx.column() for idx in indexes]
             min_row, max_row = min(rows), max(rows)
-            min_col, max_col = min(cols), max(cols)
+            min_col, max_cols = min(cols), max(cols)
 
-            # Convert column indices to byte positions
-            # Column 0 = hex area, Column 1 = ascii area
-            # For block selection, we need to calculate byte positions within rows
-            if self._block_start_byte_pos >= 0:
-                # Use stored start byte position for more accurate block selection
-                start_byte_pos = self._block_start_byte_pos
-            else:
-                # Fallback: estimate from column
-                start_byte_pos = 0
-            
-            # Determine byte range based on columns selected
-            if min_col == 0 and max_col == 0:
-                # Only hex column selected - calculate byte range
-                start_byte_pos = self._block_start_byte_pos if self._block_start_byte_pos >= 0 else 0
-                end_byte_pos = start_byte_pos + (len(cols) - 1)
-            elif min_col == 1 and max_col == 1:
-                # Only ascii column selected - same as hex column 0
-                start_byte_pos = self._block_start_byte_pos if self._block_start_byte_pos >= 0 else 0
-                end_byte_pos = start_byte_pos
-            else:
-                # Both columns selected
-                start_byte_pos = self._block_start_byte_pos if self._block_start_byte_pos >= 0 else 0
-                end_byte_pos = start_byte_pos + bytes_per_row - 1
+            # For block selection, we need to track start/end positions
+            if self._block_start_row >= 0 and self._block_start_col >= 0:
+                start_row = min(self._block_start_row, max_row)
+                end_row = max(self._block_start_row, max_row)
+                start_col = min(self._block_start_col, max_cols)
+                end_col = max(self._block_start_col, max_cols)
 
-            # Clamp to valid range
-            start_byte_pos = max(0, min(start_byte_pos, bytes_per_row - 1))
-            end_byte_pos = max(0, min(end_byte_pos, bytes_per_row - 1))
-
-            ranges = []
-            for row in range(min_row, max_row + 1):
-                if arrangement_mode == "header_length":
-                    row_offset = self._model._get_row_offset(row)
-                    if row_offset >= file_size:
-                        continue
-                    # Get data length for this row
-                    header_len = min(header_length, file_size - row_offset)
-                    if header_len > 0:
-                        header_bytes = self._model._data[row_offset:row_offset + header_len]
-                        try:
-                            data_len = int.from_bytes(header_bytes, byteorder='big')
-                        except:
-                            data_len = 0
-                        if data_len == 0:
-                            data_len = 1
-                        
-                        # Calculate start and end within this row's data
-                        actual_start = row_offset + header_length + start_byte_pos
-                        actual_end = row_offset + header_length + end_byte_pos
-                        
-                        # Clamp to file size and data length
-                        if actual_start < file_size and actual_start < row_offset + header_length + data_len:
-                            start = max(actual_start, row_offset + header_length)
-                            end = min(actual_end, row_offset + header_length + data_len - 1, file_size - 1)
-                            if end >= start:
-                                ranges.append((start, end))
-                else:
-                    start = row * bytes_per_row + start_byte_pos
-                    end = row * bytes_per_row + end_byte_pos
+                ranges = []
+                for row in range(start_row, end_row + 1):
+                    start = row * bytes_per_row + start_col
+                    end = row * bytes_per_row + end_col
                     if start < file_size:
                         ranges.append((start, min(end, file_size - 1)))
 
-            self._model.set_selection_ranges(ranges)
+                self._model.set_selection_ranges(ranges)
 
-            if ranges:
-                self.selection_changed.emit(ranges[0][0], ranges[-1][1])
+                if ranges:
+                    self.selection_changed.emit(ranges[0][0], ranges[-1][1])
+                else:
+                    self.selection_changed.emit(-1, -1)
             else:
+                self._model.clear_selection_highlight()
                 self.selection_changed.emit(-1, -1)
 
         else:
-            # Continuous selection: standard behavior - select continuous byte range
-            if not indexes:
-                self._model.clear_selection_highlight()
-                self.selection_changed.emit(-1, -1)
-                return
-                
-            # Get all selected rows and columns
-            rows = sorted(set(idx.row() for idx in indexes))
-            cols = sorted(set(idx.column() for idx in indexes))
-            
-            if arrangement_mode == "header_length":
-                # For header length mode, calculate based on actual row offsets
-                min_row = min(rows)
-                max_row = max(rows)
-                
-                start_offset = self._model._get_row_offset(min_row) + header_length
-                
-                # Get end offset from max row
-                max_row_offset = self._model._get_row_offset(max_row)
-                if max_row_offset < file_size:
-                    header_len = min(header_length, file_size - max_row_offset)
-                    if header_len > 0:
-                        header_bytes = self._model._data[max_row_offset:max_row_offset + header_len]
-                        try:
-                            data_len = int.from_bytes(header_bytes, byteorder='big')
-                        except:
-                            data_len = 0
-                        if data_len == 0:
-                            data_len = 1
-                        end_offset = max_row_offset + header_length + data_len - 1
-                    else:
-                        end_offset = max_row_offset
-                else:
-                    end_offset = file_size - 1
-                
-                end_offset = min(end_offset, file_size - 1)
-            else:
-                # Equal frame mode - calculate from rows
-                min_row = min(rows)
-                max_row = max(rows)
-                
-                # Determine byte range within rows
-                if 0 in cols and 1 in cols:
-                    # Both columns selected - select full rows
-                    start_offset = min_row * bytes_per_row
-                    end_offset = min((max_row + 1) * bytes_per_row - 1, file_size - 1)
-                elif 0 in cols:
-                    # Only hex column - calculate precise range
-                    # Use block start info if available for more precision
-                    if self._block_start_byte_pos >= 0:
-                        start_byte = self._block_start_byte_pos
-                    else:
-                        start_byte = 0
-                    start_offset = min_row * bytes_per_row + start_byte
-                    
-                    # For now, select to end of row
-                    end_offset = (max_row + 1) * bytes_per_row - 1
-                else:
-                    # Only ascii column
-                    start_offset = min_row * bytes_per_row
-                    end_offset = (max_row + 1) * bytes_per_row - 1
-                
-                end_offset = min(end_offset, file_size - 1)
+            # Continuous selection: standard behavior
+            # Find min and max offsets from selected indexes
+            min_offset = float('inf')
+            max_offset = 0
 
-            if start_offset <= end_offset:
-                self._model.set_selection(start_offset, end_offset)
-                self.selection_changed.emit(start_offset, end_offset)
+            for idx in indexes:
+                row = idx.row()
+                # Simple calculation - continuous bytes
+                offset = row * bytes_per_row
+                if offset < min_offset:
+                    min_offset = offset
+                if offset + bytes_per_row > max_offset:
+                    max_offset = offset + bytes_per_row
+
+            max_offset = min(max_offset - 1, file_size - 1)
+
+            if min_offset <= max_offset:
+                self._model.set_selection(min_offset, max_offset)
+                self.selection_changed.emit(min_offset, max_offset)
             else:
                 self._model.clear_selection_highlight()
                 self.selection_changed.emit(-1, -1)
@@ -1092,30 +877,20 @@ class HexView(QTableView):
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.indexAt(event.pos())
             if index.isValid():
-                bytes_per_row = self._model._bytes_per_row
-                
                 if self._selection_mode == self.SELECTION_BLOCK:
-                    # Start block selection - store start position with byte offset
+                    # Start block selection - store start position
                     self._block_start_row = index.row()
                     self._block_start_col = index.column()
-                    # Calculate the byte position within the row from x position
-                    self._block_start_byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
                 elif self._selection_mode == self.SELECTION_COLUMN:
                     # Column selection - calculate byte position and apply highlight directly
                     self._do_column_selection(event.pos())
                     return  # Don't call super, we handled it
-                elif self._selection_mode == self.SELECTION_CONTINUOUS:
-                    # Track start byte position for continuous selection
-                    self._block_start_byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Handle mouse move for block/continuous selection."""
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            bytes_per_row = self._model._bytes_per_row
-            current_byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
-            
-            if self._selection_mode == self.SELECTION_BLOCK and self._block_start_row >= 0:
+        """Handle mouse move for block selection."""
+        if self._selection_mode == self.SELECTION_BLOCK and self._block_start_row >= 0:
+            if event.buttons() & Qt.MouseButton.LeftButton:
                 index = self.indexAt(event.pos())
                 if index.isValid():
                     current_row = index.row()
@@ -1135,71 +910,41 @@ class HexView(QTableView):
                     bottom_right = self.model().index(end_row, 1)
                     selection.select(top_left, bottom_right)
                     self.selectionModel().select(selection, self.selectionCommand(top_left, None))
-            elif self._selection_mode == self.SELECTION_CONTINUOUS and self._block_start_byte_pos >= 0:
-                # Update continuous selection as user drags
-                index = self.indexAt(event.pos())
-                if index.isValid():
-                    current_row = index.row()
-                    # Update the selection based on drag position
-                    # This triggers _on_selection_changed which handles the rest
-                    pass
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """Handle mouse release for block/continuous selection."""
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self._selection_mode == self.SELECTION_BLOCK:
-                self._block_start_row = -1
-                self._block_start_col = -1
-            # Reset byte position tracking after selection is complete
-            self._block_start_byte_pos = -1
+        """Handle mouse release for block selection."""
+        if self._selection_mode == self.SELECTION_BLOCK and event.button() == Qt.MouseButton.LeftButton:
+            self._block_start_row = -1
+            self._block_start_col = -1
         super().mouseReleaseEvent(event)
 
     def _do_column_selection(self, pos):
         """Select entire column (byte position) across all rows - directly update highlight."""
         bytes_per_row = self._model._bytes_per_row
         file_size = self._model._file_size
-        header_length = self._model._header_length
-        arrangement_mode = self._model._arrangement_mode
+        col_width = self.columnWidth(0)
 
-        # Calculate byte position from x position using improved method
-        byte_pos = self._calculate_column_byte_pos(pos.x(), bytes_per_row)
-        
+        # Calculate byte position from x position
+        # Offset area is about 10 character widths
+        offset_chars = 10
+        char_width = col_width / (offset_chars + bytes_per_row * 3)
+        x_offset = pos.x()
+
+        byte_pos = int((x_offset / char_width - offset_chars) / 3)
+        # Clamp to valid range
+        byte_pos = max(0, min(byte_pos, bytes_per_row - 1))
+
         # Store byte position
         self._column_byte_pos = byte_pos
 
         # Create selection ranges for this byte position across all rows
         ranges = []
-        
-        if arrangement_mode == "header_length":
-            # For header length mode, iterate through rows
-            for row in range(self._model.rowCount()):
-                row_offset = self._model._get_row_offset(row)
-                if row_offset >= file_size:
-                    break
-                # Get data length for this row
-                header_len = min(header_length, file_size - row_offset)
-                if header_len > 0:
-                    header_bytes = self._model._data[row_offset:row_offset + header_len]
-                    try:
-                        data_len = int.from_bytes(header_bytes, byteorder='big')
-                    except:
-                        data_len = 0
-                    if data_len == 0:
-                        data_len = 1
-                    
-                    # Check if byte_pos is within this row's data
-                    if byte_pos < data_len:
-                        start = row_offset + header_length + byte_pos
-                        if start < file_size:
-                            ranges.append((start, start))
-        else:
-            # Equal frame mode
-            total_rows = (file_size + bytes_per_row - 1) // bytes_per_row
-            for r in range(total_rows):
-                start = r * bytes_per_row + byte_pos
-                if start < file_size:
-                    ranges.append((start, start))
+        total_rows = (file_size + bytes_per_row - 1) // bytes_per_row
+        for r in range(total_rows):
+            start = r * bytes_per_row + byte_pos
+            if start < file_size:
+                ranges.append((start, start))
 
         # Directly set selection ranges in model (don't use Qt selection)
         self._model.set_selection_ranges(ranges)
