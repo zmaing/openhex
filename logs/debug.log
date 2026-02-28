@@ -1,0 +1,408 @@
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='', mode=None
+[MAIN] Performing new search
+[MAIN] search_mode=SearchMode.HEX
+[SEARCH] _search_all_hex INPUT: pattern='23 20'
+[SEARCH] _search_all_hex cleaned: pattern='2320'
+[SEARCH] _search_all_hex parsed: search_bytes=b'# ', len=2
+[SEARCH] Found at pos=0
+[SEARCH] Found at pos=41
+[SEARCH] Found at pos=65
+[SEARCH] Found at pos=450
+[SEARCH] Found at pos=953
+[SEARCH] Found at pos=1340
+[SEARCH] Found at pos=1367
+[SEARCH] Found at pos=1824
+[SEARCH] Found at pos=2334
+[SEARCH] Found at pos=2647
+[SEARCH] Found at pos=2674
+[SEARCH] Found at pos=3063
+[SEARCH] Found at pos=3328
+[SEARCH] Found at pos=3557
+[SEARCH] Found at pos=3824
+[SEARCH] Found at pos=3848
+[SEARCH] Found at pos=4175
+[SEARCH] Found at pos=4529
+[SEARCH] Found at pos=4553
+[SEARCH] Found at pos=4831
+[SEARCH] Found at pos=5117
+[SEARCH] Found at pos=5141
+[SEARCH] Found at pos=5406
+[SEARCH] Found at pos=5624
+[SEARCH] Found at pos=5648
+[SEARCH] Found at pos=5830
+[SEARCH] Found at pos=6011
+[SEARCH] Found at pos=6532
+[MAIN] search_results count: 28
+[MAIN] result[0]: offset=0, length=2
+[MAIN] result[1]: offset=41, length=2
+[MAIN] result[2]: offset=65, length=2
+[MAIN] result[3]: offset=450, length=2
+[MAIN] result[4]: offset=953, length=2
+[INFO] _go_to_result: offset=0, index=0/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x10c21c870>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(0)
+[HEXVIEW] scrollToOffset: offset=0, total_per_row=32, row=0
+[HEXVIEW] scrollToOffset done
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='', mode=None
+[MAIN] Performing new search
+[MAIN] search_mode=SearchMode.HEX
+[SEARCH] _search_all_hex INPUT: pattern='23 20'
+[SEARCH] _search_all_hex cleaned: pattern='2320'
+[SEARCH] _search_all_hex parsed: search_bytes=b'# ', len=2
+[SEARCH] Found at pos=0
+[SEARCH] Found at pos=41
+[SEARCH] Found at pos=65
+[SEARCH] Found at pos=450
+[SEARCH] Found at pos=953
+[SEARCH] Found at pos=1340
+[SEARCH] Found at pos=1367
+[SEARCH] Found at pos=1824
+[SEARCH] Found at pos=2334
+[SEARCH] Found at pos=2647
+[SEARCH] Found at pos=2674
+[SEARCH] Found at pos=3063
+[SEARCH] Found at pos=3328
+[SEARCH] Found at pos=3557
+[SEARCH] Found at pos=3824
+[SEARCH] Found at pos=3848
+[SEARCH] Found at pos=4175
+[SEARCH] Found at pos=4529
+[SEARCH] Found at pos=4553
+[SEARCH] Found at pos=4831
+[SEARCH] Found at pos=5117
+[SEARCH] Found at pos=5141
+[SEARCH] Found at pos=5406
+[SEARCH] Found at pos=5624
+[SEARCH] Found at pos=5648
+[SEARCH] Found at pos=5830
+[SEARCH] Found at pos=6011
+[SEARCH] Found at pos=6532
+[MAIN] search_results count: 28
+[MAIN] result[0]: offset=0, length=2
+[MAIN] result[1]: offset=41, length=2
+[MAIN] result[2]: offset=65, length=2
+[MAIN] result[3]: offset=450, length=2
+[MAIN] result[4]: offset=953, length=2
+[INFO] _go_to_result: offset=0, index=0/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x120a90730>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(0)
+[HEXVIEW] scrollToOffset: offset=0, total_per_row=32, row=0
+[HEXVIEW] scrollToOffset done
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='', mode=None
+[MAIN] Performing new search
+[MAIN] search_mode=SearchMode.HEX
+[SEARCH] _search_all_hex INPUT: pattern='23 20'
+[SEARCH] _search_all_hex cleaned: pattern='2320'
+[SEARCH] _search_all_hex parsed: search_bytes=b'# ', len=2
+[SEARCH] Found at pos=0
+[SEARCH] Found at pos=41
+[SEARCH] Found at pos=65
+[SEARCH] Found at pos=450
+[SEARCH] Found at pos=953
+[SEARCH] Found at pos=1340
+[SEARCH] Found at pos=1367
+[SEARCH] Found at pos=1824
+[SEARCH] Found at pos=2334
+[SEARCH] Found at pos=2647
+[SEARCH] Found at pos=2674
+[SEARCH] Found at pos=3063
+[SEARCH] Found at pos=3328
+[SEARCH] Found at pos=3557
+[SEARCH] Found at pos=3824
+[SEARCH] Found at pos=3848
+[SEARCH] Found at pos=4175
+[SEARCH] Found at pos=4529
+[SEARCH] Found at pos=4553
+[SEARCH] Found at pos=4831
+[SEARCH] Found at pos=5117
+[SEARCH] Found at pos=5141
+[SEARCH] Found at pos=5406
+[SEARCH] Found at pos=5624
+[SEARCH] Found at pos=5648
+[SEARCH] Found at pos=5830
+[SEARCH] Found at pos=6011
+[SEARCH] Found at pos=6532
+[MAIN] search_results count: 28
+[MAIN] result[0]: offset=0, length=2
+[MAIN] result[1]: offset=41, length=2
+[MAIN] result[2]: offset=65, length=2
+[MAIN] result[3]: offset=450, length=2
+[MAIN] result[4]: offset=953, length=2
+[INFO] _go_to_result: offset=0, index=0/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x10fa78730>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(0)
+[HEXVIEW] scrollToOffset: offset=0, total_per_row=32, row=0
+[HEXVIEW] scrollToOffset done
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[MODEL] Row 32 hex: e6 b8 85 e5 8d 95 0a 0a 23 23 20 e4 b8 80 e3 80 81 e7 bc 96 e8 be 91 e5 8a 9f e8 83 bd 0a 0a 23
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='', mode=None
+[MAIN] Performing new search
+[MAIN] search_mode=SearchMode.HEX
+[SEARCH] _search_all_hex INPUT: pattern='23 20'
+[SEARCH] _search_all_hex cleaned: pattern='2320'
+[SEARCH] _search_all_hex parsed: search_bytes=b'# ', len=2
+[SEARCH] Found at pos=0
+[SEARCH] Found at pos=41
+[SEARCH] Found at pos=65
+[SEARCH] Found at pos=450
+[SEARCH] Found at pos=953
+[SEARCH] Found at pos=1340
+[SEARCH] Found at pos=1367
+[SEARCH] Found at pos=1824
+[SEARCH] Found at pos=2334
+[SEARCH] Found at pos=2647
+[SEARCH] Found at pos=2674
+[SEARCH] Found at pos=3063
+[SEARCH] Found at pos=3328
+[SEARCH] Found at pos=3557
+[SEARCH] Found at pos=3824
+[SEARCH] Found at pos=3848
+[SEARCH] Found at pos=4175
+[SEARCH] Found at pos=4529
+[SEARCH] Found at pos=4553
+[SEARCH] Found at pos=4831
+[SEARCH] Found at pos=5117
+[SEARCH] Found at pos=5141
+[SEARCH] Found at pos=5406
+[SEARCH] Found at pos=5624
+[SEARCH] Found at pos=5648
+[SEARCH] Found at pos=5830
+[SEARCH] Found at pos=6011
+[SEARCH] Found at pos=6532
+[MAIN] search_results count: 28
+[MAIN] result[0]: offset=0, length=2
+[MAIN] result[1]: offset=41, length=2
+[MAIN] result[2]: offset=65, length=2
+[MAIN] result[3]: offset=450, length=2
+[MAIN] result[4]: offset=953, length=2
+[INFO] _go_to_result: offset=0, index=0/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x115920870>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(0)
+[HEXVIEW] scrollToOffset: offset=0, total_per_row=32, row=0
+[HEXVIEW] scrollToOffset done
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[MODEL] highlight: row=0, row_offset=0, data_start=0, result=0-2, len=2, range=(0, 2), bytes_per_row=32
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='', mode=None
+[MAIN] Performing new search
+[MAIN] search_mode=SearchMode.HEX
+[SEARCH] _search_all_hex INPUT: pattern='23 20'
+[SEARCH] _search_all_hex cleaned: pattern='2320'
+[SEARCH] _search_all_hex parsed: search_bytes=b'# ', len=2
+[SEARCH] Found at pos=0
+[SEARCH] Found at pos=41
+[SEARCH] Found at pos=65
+[SEARCH] Found at pos=450
+[SEARCH] Found at pos=953
+[SEARCH] Found at pos=1340
+[SEARCH] Found at pos=1367
+[SEARCH] Found at pos=1824
+[SEARCH] Found at pos=2334
+[SEARCH] Found at pos=2647
+[SEARCH] Found at pos=2674
+[SEARCH] Found at pos=3063
+[SEARCH] Found at pos=3328
+[SEARCH] Found at pos=3557
+[SEARCH] Found at pos=3824
+[SEARCH] Found at pos=3848
+[SEARCH] Found at pos=4175
+[SEARCH] Found at pos=4529
+[SEARCH] Found at pos=4553
+[SEARCH] Found at pos=4831
+[SEARCH] Found at pos=5117
+[SEARCH] Found at pos=5141
+[SEARCH] Found at pos=5406
+[SEARCH] Found at pos=5624
+[SEARCH] Found at pos=5648
+[SEARCH] Found at pos=5830
+[SEARCH] Found at pos=6011
+[SEARCH] Found at pos=6532
+[MAIN] search_results count: 28
+[MAIN] result[0]: offset=0, length=2
+[MAIN] result[1]: offset=41, length=2
+[MAIN] result[2]: offset=65, length=2
+[MAIN] result[3]: offset=450, length=2
+[MAIN] result[4]: offset=953, length=2
+[INFO] _go_to_result: offset=0, index=0/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x1109e8910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(0)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=0
+[INFO] _go_to_result: offset=41, index=1/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x1109e8910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(41)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=1
+[INFO] _go_to_result: offset=65, index=2/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x1109e8910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(65)
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=2
+[INFO] _go_to_result: offset=450, index=3/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x1109e8910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(450)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='', mode=None
+[MAIN] Performing new search
+[MAIN] search_mode=SearchMode.HEX
+[SEARCH] _search_all_hex INPUT: pattern='23 20'
+[SEARCH] _search_all_hex cleaned: pattern='2320'
+[SEARCH] _search_all_hex parsed: search_bytes=b'# ', len=2
+[SEARCH] Found at pos=0
+[SEARCH] Found at pos=41
+[SEARCH] Found at pos=65
+[SEARCH] Found at pos=450
+[SEARCH] Found at pos=953
+[SEARCH] Found at pos=1340
+[SEARCH] Found at pos=1367
+[SEARCH] Found at pos=1824
+[SEARCH] Found at pos=2334
+[SEARCH] Found at pos=2647
+[SEARCH] Found at pos=2674
+[SEARCH] Found at pos=3063
+[SEARCH] Found at pos=3328
+[SEARCH] Found at pos=3557
+[SEARCH] Found at pos=3824
+[SEARCH] Found at pos=3848
+[SEARCH] Found at pos=4175
+[SEARCH] Found at pos=4529
+[SEARCH] Found at pos=4553
+[SEARCH] Found at pos=4831
+[SEARCH] Found at pos=5117
+[SEARCH] Found at pos=5141
+[SEARCH] Found at pos=5406
+[SEARCH] Found at pos=5624
+[SEARCH] Found at pos=5648
+[SEARCH] Found at pos=5830
+[SEARCH] Found at pos=6011
+[SEARCH] Found at pos=6532
+[MAIN] search_results count: 28
+[MAIN] result[0]: offset=0, length=2
+[MAIN] result[1]: offset=41, length=2
+[MAIN] result[2]: offset=65, length=2
+[MAIN] result[3]: offset=450, length=2
+[MAIN] result[4]: offset=953, length=2
+[INFO] _go_to_result: offset=0, index=0/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(0)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=0
+[INFO] _go_to_result: offset=41, index=1/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(41)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=1
+[INFO] _go_to_result: offset=65, index=2/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(65)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=2
+[INFO] _go_to_result: offset=450, index=3/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(450)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=3
+[INFO] _go_to_result: offset=953, index=4/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(953)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=4
+[INFO] _go_to_result: offset=1340, index=5/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(1340)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=5
+[INFO] _go_to_result: offset=1367, index=6/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(1367)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=6
+[INFO] _go_to_result: offset=1824, index=7/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(1824)
+[DEBUG] find_next: pattern='23 20', mode=hex
+[MAIN] _on_find_next: pattern='23 20', mode='hex', type=<class 'str'>
+[MAIN] last: pattern='23 20', mode=SearchMode.HEX
+[MAIN] Going to next result, current index=7
+[INFO] _go_to_result: offset=2334, index=8/28
+[INFO] current_widget: <src.ui.main_window.HexEditorTabWidget object at 0x117a2c910>, type: <class 'src.ui.main_window.HexEditorTabWidget'>
+[INFO] Calling scrollToOffset(2334)

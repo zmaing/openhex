@@ -1,0 +1,59 @@
+{
+  "version": "1.0.0",
+  "app": {
+    "name": "HexForge",
+    "organization": "HexForge",
+    "domain": "hexforge.io"
+  },
+  "editor": {
+    "bytes_per_row": 16,
+    "header_length": 0,
+    "display_mode": "hex",
+    "arrangement_mode": "equal_frame",
+    "font_family": "Menlo",
+    "font_size": 11,
+    "show_line_numbers": true,
+    "show_offset": true,
+    "show_ascii": true
+  },
+  "theme": {
+    "type": "dark",
+    "custom_colors": {}
+  },
+  "ai": {
+    "enabled": true,
+    "provider": "local",
+    "local": {
+      "endpoint": "http://localhost:11434",
+      "model": "qwen:7b",
+      "temperature": 0.7,
+      "max_tokens": 4096,
+      "timeout": 60
+    },
+    "cloud": {
+      "provider": "openai",
+      "api_key": "",
+      "base_url": "",
+      "model": "gpt-4",
+      "temperature": 0.7,
+      "max_tokens": 4096,
+      "timeout": 60
+    }
+  },
+  "file_browser": {
+    "show_hidden": false,
+    "root_path": "",
+    "recent_paths": []
+  },
+  "recent_files": [],
+  "window": {
+    "geometry": [1200, 800],
+    "maximized": false,
+    "splitter_sizes": [250, 800, 300]
+  },
+  "performance": {
+    "large_file_threshold": 100000000,
+    "mmap_enabled": true,
+    "cache_size": 1000
+  }
+}
