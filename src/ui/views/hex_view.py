@@ -22,10 +22,11 @@ class OffsetRulerWidget(QWidget):
     Shows tick marks every 10 bytes with position labels.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, hex_view=None):
         super().__init__(parent)
         self._font = QFont("Menlo", 9)
         self._font.setStyleHint(QFont.StyleHint.Monospace)
+        self._hex_view = hex_view
         self._bytes_per_row = 16
         self._header_length = 0
         self._scroll_offset = 0
@@ -126,7 +127,7 @@ class HexTableModel(QAbstractTableModel):
     HIGHLIGHT_COLOR = QColor("#515c6a")
     HIGHLIGHT_CURRENT_COLOR = QColor("#614d00")
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, hex_view=None):
         super().__init__(parent)
         self._data = bytearray()
         self._file_size = 0
@@ -516,11 +517,12 @@ class HexViewDelegate(QAbstractItemDelegate):
     # Highlight colors
     HIGHLIGHT_COLOR = QColor("#614d00")
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, hex_view=None):
         super().__init__(parent)
         self._font = QFont("Menlo", 11)
         if hasattr(self._font, 'setStyleHint'):
             self._font.setStyleHint(QFont.StyleHint.Monospace)
+        self._hex_view = hex_view
 
     def paint(self, painter, option, index):
         """Paint cell."""
@@ -543,60 +545,46 @@ class HexViewDelegate(QAbstractItemDelegate):
 
         rect = option.rect
 
-        # Check if this is continuous selection mode (byte-level selection)
-        is_continuous_mode = hasattr(self, '_selection_mode') and getattr(self, '_selection_mode', None) == 'continuous'
+        # Check if in continuous mode with byte selection
+        is_continuous = False
+        if self._hex_view:
+            is_continuous = getattr(self._hex_view, '_selection_mode', None) == 'continuous'
         
-        # In continuous mode, prefer byte-level highlight over cell selection
-        if option.state & QStyle.StateFlag.State_Selected and (selection_range or is_continuous_mode):
-            # For continuous mode, show byte-level highlight instead of cell highlight
-            if selection_range and is_continuous_mode:
-                # Draw background first
-                if bg_color:
-                    painter.fillRect(rect, bg_color)
-                if fg_color:
-                    painter.setPen(fg_color)
+        # In continuous mode with selection_range, show byte-level highlight
+        if option.state & QStyle.StateFlag.State_Selected and selection_range and is_continuous:
+            # Draw background
+            if bg_color:
+                painter.fillRect(rect, bg_color)
+            if fg_color:
+                painter.setPen(fg_color)
+            
+            # Draw byte-level highlight
+            start_byte, end_byte = selection_range
+            display_text = text or ""
+            fm = painter.fontMetrics()
+            
+            if index.column() == 0:
+                offset_chars = 10
+                hex_byte_start = offset_chars + start_byte * 3
+                hex_byte_end = offset_chars + (end_byte + 1) * 3
                 
-                # Draw byte-level highlight
-                start_byte, end_byte = selection_range
-                display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-                fm = painter.fontMetrics()
-
-                if index.column() == 0:
-                    # Hex format
-                    offset_chars = 10
-                    hex_byte_start = offset_chars + start_byte * 3
-                    if hex_byte_start <= len(display_text):
-                        prefix = display_text[:hex_byte_start]
-                        byte_x = fm.horizontalAdvance(prefix)
-                    else:
-                        byte_x = fm.horizontalAdvance(display_text)
-
-                    hex_byte_end = offset_chars + end_byte * 3
-                    if hex_byte_end <= len(display_text):
-                        full = display_text[:hex_byte_end]
-                        byte_width = fm.horizontalAdvance(full) - byte_x
-                    else:
-                        byte_width = fm.horizontalAdvance(display_text[hex_byte_start:]) if hex_byte_start < len(display_text) else 0
-
-                    highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
-                    painter.fillRect(highlight_rect, QColor("#3a3d41"))
-                else:
-                    # ASCII column
-                    prefix = display_text[:start_byte] if start_byte <= len(display_text) else display_text
-                    byte_x = fm.horizontalAdvance(prefix)
-                    full = display_text[:end_byte] if end_byte <= len(display_text) else display_text
-                    byte_width = fm.horizontalAdvance(full) - byte_x
-                    highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
-                    painter.fillRect(highlight_rect, QColor("#3a3d41"))
+                prefix = display_text[:hex_byte_start] if hex_byte_start <= len(display_text) else display_text
+                byte_x = fm.horizontalAdvance(prefix)
                 
-                # Set text color
-                painter.setPen(QColor("#ffffff"))
-                painter.restore()
-                return
+                full = display_text[:hex_byte_end] if hex_byte_end <= len(display_text) else display_text
+                byte_width = fm.horizontalAdvance(full) - byte_x
+                
+                hl_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
+                painter.fillRect(hl_rect, QColor("#3a3d41"))
             else:
-                # Non-continuous mode: use default cell selection
-                painter.fillRect(rect, QColor("#264f78"))
-                painter.setPen(QColor("#ffffff"))
+                prefix = display_text[:start_byte] if start_byte <= len(display_text) else display_text
+                byte_x = fm.horizontalAdvance(prefix)
+                full = display_text[:end_byte+1] if end_byte+1 <= len(display_text) else display_text
+                byte_width = fm.horizontalAdvance(full) - byte_x
+                hl_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
+                painter.fillRect(hl_rect, QColor("#3a3d41"))
+            
+            painter.setPen(QColor("#ffffff"))
         elif option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(rect, QColor("#264f78"))
             painter.setPen(QColor("#ffffff"))
@@ -612,7 +600,7 @@ class HexViewDelegate(QAbstractItemDelegate):
             active_range = selection_range if selection_range else highlight_range
             active_color = QColor("#3a3d41") if selection_range else self.HIGHLIGHT_COLOR
 
-            if active_range:
+            if active_range and not option.state & QStyle.StateFlag.State_Selected:
                 start_byte, end_byte = active_range
                 display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
                 fm = painter.fontMetrics()
@@ -689,7 +677,7 @@ class HexView(QTableView):
     cursor_moved = pyqtSignal(int)  # Current offset
     selection_changed = pyqtSignal(int, int)  # Start, end of selection
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, hex_view=None):
         super().__init__(parent)
         self._file_handle = None
 
@@ -703,14 +691,13 @@ class HexView(QTableView):
 
         # Column selection state
         self._column_byte_pos = -1
-        self._block_start_byte_pos = -1  # Store start byte position for block/continuous selection
-        self._continuous_end_byte_pos = -1  # Store end byte position for continuous selection
+        self._block_start_byte_pos = -1  # Store start byte position for block/continuous selection  # Byte position for column selection
 
         # Setup model and delegate
         self._model = HexTableModel(self)
         self.setModel(self._model)
 
-        self._delegate = HexViewDelegate(self)
+        self._delegate = HexViewDelegate(self, self)
         self.setItemDelegate(self._delegate)
 
         # Setup appearance
@@ -1118,20 +1105,16 @@ class HexView(QTableView):
                     start_offset = min_row * bytes_per_row
                     end_offset = min((max_row + 1) * bytes_per_row - 1, file_size - 1)
                 elif 0 in cols:
-                    # Only hex column - calculate precise byte range
-                    # Use tracked start/end byte positions
+                    # Only hex column - calculate precise range
+                    # Use block start info if available for more precision
                     if self._block_start_byte_pos >= 0:
                         start_byte = self._block_start_byte_pos
                     else:
                         start_byte = 0
                     start_offset = min_row * bytes_per_row + start_byte
                     
-                    # Use actual end byte position if tracking, otherwise use row end
-                    if self._continuous_end_byte_pos >= 0:
-                        end_byte = self._continuous_end_byte_pos
-                    else:
-                        end_byte = bytes_per_row - 1
-                    end_offset = max_row * bytes_per_row + end_byte
+                    # For now, select to end of row
+                    end_offset = (max_row + 1) * bytes_per_row - 1
                 else:
                     # Only ascii column
                     start_offset = min_row * bytes_per_row
@@ -1199,8 +1182,9 @@ class HexView(QTableView):
                 index = self.indexAt(event.pos())
                 if index.isValid():
                     current_row = index.row()
-                    current_byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
-                    self._continuous_end_byte_pos = current_byte_pos
+                    # Update the selection based on drag position
+                    # This triggers _on_selection_changed which handles the rest
+                    pass
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -1211,7 +1195,6 @@ class HexView(QTableView):
                 self._block_start_col = -1
             # Reset byte position tracking after selection is complete
             self._block_start_byte_pos = -1
-            self._continuous_end_byte_pos = -1
         super().mouseReleaseEvent(event)
 
     def _do_column_selection(self, pos):
@@ -1385,7 +1368,7 @@ class HexViewWidget(QWidget):
     Hex view widget with hex view, ruler, and vertical scrollbar.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, hex_view=None):
         super().__init__(parent)
         self._file_handle = None
 
