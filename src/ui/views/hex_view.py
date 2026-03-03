@@ -909,7 +909,7 @@ class HexView(QTableView):
         """Calculate byte position within a row from x position.
 
         Args:
-            x_pos: X position in viewport coordinates
+            x_pos: X position in widget coordinates
             bytes_per_row: Number of bytes per row
 
         Returns:
@@ -918,32 +918,43 @@ class HexView(QTableView):
         if bytes_per_row <= 0:
             return 0
         
-        # Get column width
-        col_width = self.columnWidth(0)
+        # Get first visible row
+        first_row = max(0, self.rowAt(10))
+        index = self.model().index(first_row, 0)
         
-        # Use QFontMetrics for accurate character width
+        if not index.isValid():
+            return 0
+        
+        # Get visual rect
+        rect = self.visualRect(index)
+        
+        # Get display text
+        display_text = index.data(Qt.ItemDataRole.DisplayRole)
+        if not display_text:
+            return 0
+        
+        # Use QFontMetrics
         font = self.font()
         fm = QFontMetrics(font)
         
-        # Calculate offset width: 8 hex chars + 2 spaces = 10 chars
+        # Offset area: 10 chars (8 for offset + 2 spaces)
         offset_chars = 10
+        text_padding = 5
+        
+        # Calculate position in hex area
         offset_width = fm.horizontalAdvance("0") * offset_chars
+        x_in_hex = x_pos - text_padding - offset_width
         
-        # Padding in cell
-        padding = 5
-        
-        # X position in hex data area
-        x_in_hex = x_pos - offset_width - padding
-        
-        if x_in_hex < 0:
+        if x_in_hex <= 0:
             return 0
         
         # Calculate hex area width
-        hex_area = col_width - offset_width - padding
+        hex_area = rect.width() - text_padding - offset_width
+        
         if hex_area <= 0:
             return 0
         
-        # Calculate byte position based on ratio
+        # Calculate byte position
         byte_pos = int(x_in_hex / (hex_area / bytes_per_row))
         
         return max(0, min(byte_pos, bytes_per_row - 1))
