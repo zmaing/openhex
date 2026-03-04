@@ -824,7 +824,7 @@ class HexViewDelegate(QAbstractItemDelegate):
                 else:
                     return
 
-            if cursor_byte < data_start or cursor_byte >= data_end:
+            if cursor_byte < data_start or cursor_byte > data_end:
                 print(f"[DrawCursor] Cursor not in this row, returning")
                 return
 
