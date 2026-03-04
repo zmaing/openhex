@@ -145,6 +145,10 @@ class HexTableModel(QAbstractTableModel):
         # Selection highlight - stores list of (start, end) byte ranges
         self._selection_ranges = []  # List of (start_offset, end_offset) tuples
 
+        # Cursor position for editing
+        self._cursor_offset = 0  # Current byte offset
+        self._cursor_nibble = 0  # 0 = high nibble, 1 = low nibble
+
         # Cached values
         self._row_count = 0
 
@@ -603,12 +607,29 @@ class HexViewDelegate(QAbstractItemDelegate):
 
     # Highlight colors
     HIGHLIGHT_COLOR = QColor("#614d00")
+    CURSOR_COLOR = QColor("#ffffff")
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._font = QFont("Menlo", 11)
         if hasattr(self._font, 'setStyleHint'):
             self._font.setStyleHint(QFont.StyleHint.Monospace)
+
+        # Cursor position for editing
+        self._cursor_byte_offset = -1  # Current byte offset, -1 means no cursor
+        self._nibble_pos = 0  # 0 = high nibble, 1 = low nibble
+        self._cursor_visible = True  # For blinking
+        self._cursor_column = 0  # 0 = hex column, 1 = ASCII column
+
+    def set_cursor_position(self, byte_offset: int, nibble_pos: int = 0, column: int = 0):
+        """Set cursor position for drawing."""
+        self._cursor_byte_offset = byte_offset
+        self._nibble_pos = nibble_pos
+        self._cursor_column = column
+
+    def set_cursor_visible(self, visible: bool):
+        """Set cursor visibility (for blinking)."""
+        self._cursor_visible = visible
 
     def paint(self, painter, option, index):
         """Paint cell."""
@@ -731,7 +752,87 @@ class HexViewDelegate(QAbstractItemDelegate):
                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                         text)
 
+        # Draw cursor if this is the cursor position
+        if self._cursor_visible and self._cursor_byte_offset >= 0:
+            self._draw_cursor(painter, option, index, rect)
+
         painter.restore()
+
+    def _draw_cursor(self, painter, option, index, rect):
+        """Draw editing cursor at current position."""
+        # Only draw if this row contains the cursor
+        model = index.model()
+        bytes_per_row = model._bytes_per_row
+        header_length = model._header_length
+        arrangement_mode = model._arrangement_mode
+        row = index.row()
+
+        # Calculate byte range for this row
+        if arrangement_mode == "header_length":
+            row_offset = model._get_row_offset(row)
+            data_start = row_offset + header_length
+            # Get data length for this row
+            if row_offset < model._file_size:
+                header_bytes = model._data[row_offset:row_offset + header_length]
+                try:
+                    data_len = int.from_bytes(header_bytes, byteorder='big')
+                except:
+                    data_len = 1
+                if data_len == 0:
+                    data_len = 1
+                data_end = data_start + data_len
+            else:
+                return
+        else:
+            data_start = row * bytes_per_row
+            data_end = min(data_start + bytes_per_row, model._file_size)
+
+        # Check if cursor is in this row
+        cursor_byte = self._cursor_byte_offset
+        if cursor_byte < data_start or cursor_byte >= data_end:
+            return
+
+        # Calculate byte position within the row
+        byte_in_row = cursor_byte - data_start
+
+        fm = painter.fontMetrics()
+        text_padding = 5
+
+        if index.column() == 0 and self._cursor_column == 0:
+            # Cursor in hex column
+            # Format: "00000000  AA BB CC DD EE FF 00 11"
+            offset_chars = 10  # "00000000  "
+            # Each byte is 3 chars: "AA "
+            hex_pos = offset_chars + byte_in_row * 3
+
+            # Calculate x position
+            display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+            if hex_pos <= len(display_text):
+                prefix = display_text[:hex_pos]
+                cursor_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+
+                # Adjust for nibble position (high or low nibble within the byte)
+                nibble_offset = fm.horizontalAdvance("0") * (1 - self._nibble_pos)
+                cursor_x += nibble_offset
+
+                # Draw cursor line
+                cursor_height = rect.height() - 4
+                cursor_y = rect.y() + 2
+                painter.setPen(QPen(self.CURSOR_COLOR, 2))
+                painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
+
+        elif index.column() == 1 and self._cursor_column == 1:
+            # Cursor in ASCII column
+            display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+            if byte_in_row < len(display_text):
+                prefix = display_text[:byte_in_row]
+                cursor_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+
+                # Draw cursor line
+                cursor_height = rect.height() - 4
+                cursor_y = rect.y() + 2
+                painter.setPen(QPen(self.CURSOR_COLOR, 2))
+                painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
 
     def sizeHint(self, option, index):
         """Return cell size hint."""
