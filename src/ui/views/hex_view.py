@@ -747,10 +747,14 @@ class HexView(QTableView):
     # Signals
     cursor_moved = pyqtSignal(int)  # Current offset
     selection_changed = pyqtSignal(int, int)  # Start, end of selection
+    edit_mode_changed = pyqtSignal(str)  # 'overwrite' or 'insert'
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._file_handle = None
+
+        # Edit mode: 'overwrite' or 'insert'
+        self._edit_mode = 'overwrite'  # Default to overwrite mode
 
         # Selection mode
         self._selection_mode = self.SELECTION_CONTINUOUS
@@ -845,6 +849,16 @@ class HexView(QTableView):
     def get_selection_mode(self) -> str:
         """Get current selection mode."""
         return self._selection_mode
+
+    def toggle_edit_mode(self):
+        """Toggle between overwrite and insert mode."""
+        self._edit_mode = 'insert' if self._edit_mode == 'overwrite' else 'overwrite'
+        self.edit_mode_changed.emit(self._edit_mode)
+        return self._edit_mode
+
+    def get_edit_mode(self) -> str:
+        """Get current edit mode."""
+        return self._edit_mode
 
     def _show_context_menu(self, pos):
         """Show context menu at position."""
@@ -1612,6 +1626,11 @@ class HexView(QTableView):
 
     def keyPressEvent(self, event):
         """Handle key press."""
+        # Handle Insert key for mode toggle
+        if event.key() == Qt.Key.Key_Insert:
+            self.toggle_edit_mode()
+            return
+
         # Let parent handle most keys
         super().keyPressEvent(event)
 

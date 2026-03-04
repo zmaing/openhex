@@ -250,6 +250,11 @@ class HexEditorMainWindow(QWidget):
         self._mode_label = QLabel("Hex")
         layout.addWidget(self._mode_label)
 
+        # Edit mode label (OVR/INS)
+        self._edit_mode_label = QLabel("OVR")
+        self._edit_mode_label.setStyleSheet("color: #569cd6; font-weight: bold;")
+        layout.addWidget(self._edit_mode_label)
+
         bar.setLayout(layout)
 
         # Add showMessage method
@@ -486,6 +491,15 @@ class HexEditorMainWindow(QWidget):
         """Connect signals."""
         self._document_model.document_changed.connect(self._on_document_changed)
         self._document_model.document_modified.connect(self._on_document_modified)
+
+    def _update_edit_mode_display(self, mode: str):
+        """Update status bar with current edit mode."""
+        self._edit_mode_label.setText("INS" if mode == 'insert' else "OVR")
+
+    def _connect_hex_view_signals(self, hex_view):
+        """Connect signals from hex view."""
+        if hasattr(hex_view, 'edit_mode_changed'):
+            hex_view.edit_mode_changed.connect(self._update_edit_mode_display)
 
     # File operations
     def new_file(self):
@@ -1372,6 +1386,11 @@ class HexEditorMainWindow(QWidget):
         index = self._tab_widget.addTab(hex_view_widget, doc.file_name)
         self._tab_widget.setCurrentIndex(index)
         self._update_tab_name(index, doc)
+
+        # Connect hex view signals for status bar updates
+        hex_view = hex_view_widget.hex_view
+        if hasattr(hex_view, 'edit_mode_changed'):
+            hex_view.edit_mode_changed.connect(self._update_edit_mode_display)
 
     def _update_tab_name(self, index: int, doc: FileHandle):
         """Update tab name with modification indicator."""
