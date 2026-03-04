@@ -874,9 +874,15 @@ class HexView(QTableView):
         byte_offset = self._cursor_byte_offset
         nibble = self._nibble_pos
 
-        # Check if we have file data
-        if not self._file_handle or self._model._file_size == 0:
+        # Check if we have file handle
+        if not self._file_handle:
             return
+
+        # Handle empty file - create first byte
+        if self._model._file_size == 0:
+            self._file_handle.insert(0, bytes([0]))
+            self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
+            self._cursor_byte_offset = 0
 
         # Check if we need to extend file
         if byte_offset >= self._model._file_size:
@@ -937,9 +943,16 @@ class HexView(QTableView):
 
         byte_offset = self._cursor_byte_offset
 
-        # Check if we have file data
-        if not self._file_handle or self._model._file_size == 0:
+        # Check if we have file handle
+        if not self._file_handle:
             return
+
+        # Handle empty file - create first byte
+        if self._model._file_size == 0:
+            self._file_handle.insert(0, bytes([0]))
+            self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
+            byte_offset = 0
+            self._cursor_byte_offset = 0
 
         # Check if we need to extend file
         if byte_offset >= self._model._file_size:
@@ -1397,7 +1410,18 @@ class HexView(QTableView):
             index = self.indexAt(event.pos())
             if index.isValid():
                 bytes_per_row = self._model._bytes_per_row
-                
+
+                # Update cursor byte offset based on click position
+                byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
+                header_length = self._model._header_length
+                arrangement_mode = self._model._arrangement_mode
+
+                if arrangement_mode == "header_length":
+                    row_offset = self._model._get_row_offset(index.row())
+                    self._cursor_byte_offset = row_offset + header_length + byte_pos
+                else:
+                    self._cursor_byte_offset = index.row() * bytes_per_row + byte_pos
+
                 if self._selection_mode == self.SELECTION_BLOCK:
                     # Start block selection - store start position with byte offset
                     self._block_start_row = index.row()
@@ -1759,6 +1783,9 @@ class HexView(QTableView):
             index = self.currentIndex()
 
             if index.isValid():
+                # Update cursor byte offset from current index before handling input
+                self._update_cursor_offset_from_index(index)
+
                 if index.column() == 0:
                     # In hex column - handle hex input
                     char_upper = char.upper()
@@ -1773,9 +1800,33 @@ class HexView(QTableView):
         # Let parent handle most keys
         super().keyPressEvent(event)
 
+        # Update cursor offset after navigation keys
+        index = self.currentIndex()
+        if index.isValid():
+            self._update_cursor_offset_from_index(index)
+
         # Emit cursor moved signal
         offset = self.get_offset_at_cursor()
         self.cursor_moved.emit(offset)
+
+    def _update_cursor_offset_from_index(self, index):
+        """Update cursor byte offset from model index."""
+        if not index.isValid():
+            return
+
+        bytes_per_row = self._model._bytes_per_row
+        header_length = self._model._header_length
+        arrangement_mode = self._model._arrangement_mode
+        row = index.row()
+
+        if arrangement_mode == "header_length":
+            row_offset = self._model._get_row_offset(row)
+            # For header_length mode, use the stored byte position or 0
+            byte_in_row = getattr(self, '_cursor_byte_in_row', 0)
+            self._cursor_byte_offset = row_offset + header_length + byte_in_row
+        else:
+            # For equal frame mode, calculate from current nibble position
+            self._cursor_byte_offset = row * bytes_per_row + (self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset > 0 else 0)
 
     # ==================== Clipboard Operations ====================
 
