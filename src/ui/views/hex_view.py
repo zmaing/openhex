@@ -1730,10 +1730,28 @@ class HexView(QTableView):
 
     def keyPressEvent(self, event):
         """Handle key press."""
+        from PyQt6.QtCore import Qt
+
         # Handle Insert key for mode toggle
         if event.key() == Qt.Key.Key_Insert:
             self.toggle_edit_mode()
             return
+
+        # Handle clipboard shortcuts
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            if event.key() == Qt.Key.Key_C:
+                # Ctrl+C: Copy
+                self.copy_selection()
+                return
+            elif event.key() == Qt.Key.Key_V:
+                # Ctrl+V: Paste
+                self.paste_from_clipboard()
+                return
+            elif event.key() == Qt.Key.Key_X:
+                # Ctrl+X: Cut
+                self.cut_selection()
+                return
 
         # Handle text input
         if event.text() and len(event.text()) == 1:
@@ -1758,6 +1776,163 @@ class HexView(QTableView):
         # Emit cursor moved signal
         offset = self.get_offset_at_cursor()
         self.cursor_moved.emit(offset)
+
+    # ==================== Clipboard Operations ====================
+
+    def get_selection_data(self) -> tuple:
+        """Get selected data as bytes and selection info.
+
+        Returns:
+            tuple: (data: bytes, start_offset: int, end_offset: int) or (None, -1, -1) if no selection
+        """
+        if not hasattr(self._model, '_selection_ranges') or not self._model._selection_ranges:
+            return None, -1, -1
+
+        ranges = self._model._selection_ranges
+        if not ranges:
+            return None, -1, -1
+
+        # Collect all selected bytes
+        data = bytearray()
+        for start, end in ranges:
+            if start < len(self._model._data) and end < len(self._model._data):
+                data.extend(self._model._data[start:end + 1])
+
+        if not data:
+            return None, -1, -1
+
+        return bytes(data), ranges[0][0], ranges[-1][1]
+
+    def copy_selection(self) -> bool:
+        """Copy selected data to clipboard.
+
+        Format depends on current column and display mode:
+        - Hex column: copies as hex string (e.g., "00 FF AA")
+        - ASCII column: copies as ASCII text (e.g., "Hello")
+
+        Returns:
+            bool: True if copy succeeded, False otherwise
+        """
+        from src.utils.clipboard_manager import ClipboardManager
+
+        data, start, end = self.get_selection_data()
+        if data is None:
+            return False
+
+        index = self.currentIndex()
+        if not index.isValid():
+            return False
+
+        # Determine format based on current column
+        if index.column() == 0:
+            # Hex column - copy as hex
+            text = ClipboardManager.copy_hex(data)
+        else:
+            # ASCII column - copy as ASCII
+            text = ClipboardManager.copy_ascii(data)
+
+        ClipboardManager.copy_to_clipboard(text)
+        return True
+
+    def paste_from_clipboard(self) -> bool:
+        """Paste clipboard data at cursor position.
+
+        Automatically detects format:
+        - Hex string (e.g., "00 FF AA") -> parsed as hex
+        - Plain text -> used as ASCII
+
+        Returns:
+            bool: True if paste succeeded, False otherwise
+        """
+        from src.utils.clipboard_manager import ClipboardManager
+
+        # Get data from clipboard
+        data = ClipboardManager.parse_clipboard()
+        if not data:
+            return False
+
+        # Get current cursor position
+        index = self.currentIndex()
+        if not index.isValid():
+            return False
+
+        # Calculate byte offset from cursor position
+        row = index.row()
+        col = index.column()
+        bytes_per_row = self._model._bytes_per_row
+        header_length = self._model._header_length
+        arrangement_mode = self._model._arrangement_mode
+
+        if arrangement_mode == "header_length":
+            row_offset = self._model._get_row_offset(row)
+            cursor_offset = row_offset + header_length + self._cursor_byte_offset
+        else:
+            cursor_offset = row * bytes_per_row + self._cursor_byte_offset
+
+        # Check if we have a file handle for writing
+        if not self._file_handle:
+            return False
+
+        # Write data at cursor position
+        try:
+            file_size = self._file_handle.file_size
+
+            if self._edit_mode == "overwrite":
+                # Overwrite mode: replace existing bytes
+                for i, byte in enumerate(data):
+                    pos = cursor_offset + i
+                    if pos < file_size:
+                        self._file_handle.write_byte(pos, byte)
+            else:
+                # Insert mode: insert bytes (shifts data)
+                # For now, implement as overwrite in insert mode
+                # Full insert requires more complex implementation
+                for i, byte in enumerate(data):
+                    pos = cursor_offset + i
+                    if pos < file_size:
+                        self._file_handle.write_byte(pos, byte)
+
+            # Reload data to show changes
+            self._reload_data()
+            return True
+
+        except Exception as e:
+            print(f"Paste error: {e}")
+            return False
+
+    def cut_selection(self) -> bool:
+        """Cut selected data to clipboard.
+
+        Copies selection to clipboard, then deletes the selected bytes.
+
+        Returns:
+            bool: True if cut succeeded, False otherwise
+        """
+        # First copy the selection
+        if not self.copy_selection():
+            return False
+
+        # Get selection info before clearing
+        data, start, end = self.get_selection_data()
+        if data is None:
+            return False
+
+        # Delete selected bytes (set to 0 for now)
+        # Full implementation would shift remaining data
+        if self._file_handle:
+            try:
+                for i in range(start, end + 1):
+                    if i < self._file_handle.file_size:
+                        self._file_handle.write_byte(i, 0)
+                self._reload_data()
+                # Clear selection
+                self._model.clear_selection_highlight()
+                return True
+            except Exception as e:
+                print(f"Cut error: {e}")
+                return False
+
+        return False
 
 
 class HexViewWidget(QWidget):
