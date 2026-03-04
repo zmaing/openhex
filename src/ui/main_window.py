@@ -506,6 +506,20 @@ class HexEditorMainWindow(QWidget):
         """Create new file."""
         doc = self._document_model.new_document()
         self._add_editor_tab(doc)
+        
+        # Ensure window is active and focus is on hex view
+        self.activateWindow()
+        self.raise_()
+        
+        # Set focus to hex view for immediate editing
+        current_widget = self._tab_widget.currentWidget()
+        if current_widget and hasattr(current_widget, 'hex_view'):
+            hex_view = current_widget.hex_view
+            hex_view.setFocus()
+            hex_view.activateWindow()
+            # Ensure the widget is focusable
+            from PyQt6.QtCore import Qt
+            hex_view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def open_file(self, path=None):
         """Open file."""

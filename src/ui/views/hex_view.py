@@ -6,12 +6,12 @@ Main hex view widget with virtual scrolling for efficient large file display.
 
 from PyQt6.QtWidgets import QAbstractItemDelegate, QTableView, QScrollArea, QWidget, QVBoxLayout, QHBoxLayout, QStyle, QAbstractItemView
 from PyQt6.QtCore import Qt, QModelIndex, QRect, pyqtSignal, QSize, QAbstractTableModel, QVariant, QEvent
+from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QTextFormat, QPalette, QPen
 
 # Custom role for search highlight range
 UserRole_HighlightRange = Qt.ItemDataRole.UserRole
 # Custom role for selection highlight range
 UserRole_SelectionRange = Qt.ItemDataRole.UserRole + 1
-from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QTextFormat, QPalette
 
 import math
 
@@ -626,6 +626,8 @@ class HexViewDelegate(QAbstractItemDelegate):
         self._cursor_byte_offset = byte_offset
         self._nibble_pos = nibble_pos
         self._cursor_column = column
+        # Debug output
+        print(f"[Delegate] Cursor set: byte={byte_offset}, nibble={nibble_pos}, col={column}")
 
     def set_cursor_visible(self, visible: bool):
         """Set cursor visibility (for blinking)."""
@@ -633,206 +635,249 @@ class HexViewDelegate(QAbstractItemDelegate):
 
     def paint(self, painter, option, index):
         """Paint cell."""
-        painter.save()
+        try:
+            painter.save()
 
-        # Set font
-        painter.setFont(self._font)
+            # Set font
+            painter.setFont(self._font)
 
-        # Get data
-        text = index.data(Qt.ItemDataRole.DisplayRole)
-        if text is None:
-            painter.restore()
-            return
+            # Get data
+            text = index.data(Qt.ItemDataRole.DisplayRole)
+            if text is None:
+                painter.restore()
+                return
 
-        # Set colors
-        bg_color = index.data(Qt.ItemDataRole.BackgroundRole)
-        fg_color = index.data(Qt.ItemDataRole.ForegroundRole)
-        highlight_range = index.data(UserRole_HighlightRange)
-        selection_range = index.data(UserRole_SelectionRange)
+            # Set colors
+            bg_color = index.data(Qt.ItemDataRole.BackgroundRole)
+            fg_color = index.data(Qt.ItemDataRole.ForegroundRole)
+            highlight_range = index.data(UserRole_HighlightRange)
+            selection_range = index.data(UserRole_SelectionRange)
 
-        rect = option.rect
+            rect = option.rect
 
-        # Priority: if selection_range exists, draw byte-level highlight instead of cell selection
-        if selection_range:
-            # Draw background
-            if bg_color:
-                painter.fillRect(rect, bg_color)
-            if fg_color:
-                painter.setPen(fg_color)
-            
-            # Draw byte-level highlight
-            start_byte, end_byte = selection_range
-            display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-            fm = painter.fontMetrics()
-            active_color = QColor("#264f78")
-            
-            # Text has 5px left padding, account for this in highlight
-            text_padding = 5
-            
-            if index.column() == 0:
-                offset_chars = 10
-                hex_byte_start = offset_chars + start_byte * 3
-                hex_byte_end = offset_chars + end_byte * 3
-                
-                prefix = display_text[:hex_byte_start] if hex_byte_start <= len(display_text) else display_text
-                byte_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
-                
-                full = display_text[:hex_byte_end] if hex_byte_end <= len(display_text) else display_text
-                byte_width = fm.horizontalAdvance(full) - (fm.horizontalAdvance(prefix) if hex_byte_start <= len(display_text) else 0)
-                
-                highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
-                painter.fillRect(highlight_rect, active_color)
-            else:
-                prefix = display_text[:start_byte] if start_byte <= len(display_text) else display_text
-                byte_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
-                full = display_text[:end_byte] if end_byte <= len(display_text) else display_text
-                byte_width = fm.horizontalAdvance(full) - (fm.horizontalAdvance(prefix) if start_byte <= len(display_text) else 0)
-                highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
-                painter.fillRect(highlight_rect, active_color)
-            
-            painter.setPen(QColor("#ffffff"))
-        elif option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(rect, QColor("#264f78"))
-            painter.setPen(QColor("#ffffff"))
-        else:
-            # Draw background first
-            if bg_color:
-                painter.fillRect(rect, bg_color)
-            if fg_color:
-                painter.setPen(fg_color)
+            # Priority: if selection_range exists, draw byte-level highlight instead of cell selection
+            if selection_range:
+                # Draw background
+                if bg_color:
+                    painter.fillRect(rect, bg_color)
+                if fg_color:
+                    painter.setPen(fg_color)
 
-            # Draw highlight for selected bytes BEFORE drawing text
-            # Priority: selection highlight > search highlight
-            active_range = selection_range if selection_range else highlight_range
-            active_color = QColor("#3a3d41") if selection_range else self.HIGHLIGHT_COLOR
-
-            if active_range and not option.state & QStyle.StateFlag.State_Selected:
-                start_byte, end_byte = active_range
+                # Draw byte-level highlight
+                start_byte, end_byte = selection_range
                 display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
                 fm = painter.fontMetrics()
+                active_color = QColor("#264f78")
+
+                # Text has 5px left padding, account for this in highlight
+                text_padding = 5
 
                 if index.column() == 0:
-                    # Hex format: "00000000  XX XX XX..."
-                    # Offset: 8 chars + 2 spaces = 10 chars
-                    # Each byte: 3 chars (2 hex + 1 space)
                     offset_chars = 10
                     hex_byte_start = offset_chars + start_byte * 3
-
-                    # Measure width up to the start position
-                    if hex_byte_start <= len(display_text):
-                        prefix = display_text[:hex_byte_start]
-                        byte_x = rect.x() + fm.horizontalAdvance(prefix)
-                    else:
-                        byte_x = rect.x() + fm.horizontalAdvance(display_text)
-
-                    # Measure width of the highlighted portion
                     hex_byte_end = offset_chars + end_byte * 3
-                    if hex_byte_end <= len(display_text):
-                        full = display_text[:hex_byte_end]
-                        byte_width = fm.horizontalAdvance(full) - fm.horizontalAdvance(prefix) if hex_byte_start <= len(display_text) else fm.horizontalAdvance(display_text)
-                    else:
-                        byte_width = fm.horizontalAdvance(display_text[hex_byte_start:]) if hex_byte_start < len(display_text) else 0
+
+                    prefix = display_text[:hex_byte_start] if hex_byte_start <= len(display_text) else display_text
+                    byte_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+
+                    full = display_text[:hex_byte_end] if hex_byte_end <= len(display_text) else display_text
+                    byte_width = fm.horizontalAdvance(full) - (fm.horizontalAdvance(prefix) if hex_byte_start <= len(display_text) else 0)
 
                     highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
                     painter.fillRect(highlight_rect, active_color)
                 else:
-                    # ASCII column
                     prefix = display_text[:start_byte] if start_byte <= len(display_text) else display_text
-                    byte_x = rect.x() + fm.horizontalAdvance(prefix)
-
+                    byte_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
                     full = display_text[:end_byte] if end_byte <= len(display_text) else display_text
-                    byte_width = fm.horizontalAdvance(full) - fm.horizontalAdvance(prefix) if start_byte <= len(display_text) else 0
-
+                    byte_width = fm.horizontalAdvance(full) - (fm.horizontalAdvance(prefix) if start_byte <= len(display_text) else 0)
                     highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
                     painter.fillRect(highlight_rect, active_color)
 
-        # Draw text (always draw, on top of background and highlight)
-        text_rect = rect.adjusted(5, 0, -5, 0)
-        painter.drawText(text_rect,
-                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                        text)
+                painter.setPen(QColor("#ffffff"))
+            elif option.state & QStyle.StateFlag.State_Selected:
+                painter.fillRect(rect, QColor("#264f78"))
+                painter.setPen(QColor("#ffffff"))
+            else:
+                # Draw background first
+                if bg_color:
+                    painter.fillRect(rect, bg_color)
+                if fg_color:
+                    painter.setPen(fg_color)
 
-        # Draw cursor if this is the cursor position
-        if self._cursor_visible and self._cursor_byte_offset >= 0:
-            self._draw_cursor(painter, option, index, rect)
+                # Draw highlight for selected bytes BEFORE drawing text
+                # Priority: selection highlight > search highlight
+                active_range = selection_range if selection_range else highlight_range
+                active_color = QColor("#3a3d41") if selection_range else self.HIGHLIGHT_COLOR
 
-        painter.restore()
+                if active_range and not option.state & QStyle.StateFlag.State_Selected:
+                    start_byte, end_byte = active_range
+                    display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+                    fm = painter.fontMetrics()
+
+                    if index.column() == 0:
+                        # Hex format: "00000000  XX XX XX..."
+                        # Offset: 8 chars + 2 spaces = 10 chars
+                        # Each byte: 3 chars (2 hex + 1 space)
+                        offset_chars = 10
+                        hex_byte_start = offset_chars + start_byte * 3
+
+                        # Measure width up to the start position
+                        if hex_byte_start <= len(display_text):
+                            prefix = display_text[:hex_byte_start]
+                            byte_x = rect.x() + fm.horizontalAdvance(prefix)
+                        else:
+                            byte_x = rect.x() + fm.horizontalAdvance(display_text)
+
+                        # Measure width of the highlighted portion
+                        hex_byte_end = offset_chars + end_byte * 3
+                        if hex_byte_end <= len(display_text):
+                            full = display_text[:hex_byte_end]
+                            byte_width = fm.horizontalAdvance(full) - fm.horizontalAdvance(prefix) if hex_byte_start <= len(display_text) else fm.horizontalAdvance(display_text)
+                        else:
+                            byte_width = fm.horizontalAdvance(display_text[hex_byte_start:]) if hex_byte_start < len(display_text) else 0
+
+                        highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
+                        painter.fillRect(highlight_rect, active_color)
+                    else:
+                        # ASCII column
+                        prefix = display_text[:start_byte] if start_byte <= len(display_text) else display_text
+                        byte_x = rect.x() + fm.horizontalAdvance(prefix)
+
+                        full = display_text[:end_byte] if end_byte <= len(display_text) else display_text
+                        byte_width = fm.horizontalAdvance(full) - fm.horizontalAdvance(prefix) if start_byte <= len(display_text) else 0
+
+                        highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
+                        painter.fillRect(highlight_rect, active_color)
+
+            # Draw text (always draw, on top of background and highlight)
+            text_rect = rect.adjusted(5, 0, -5, 0)
+            painter.drawText(text_rect,
+                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                            text)
+
+            # Draw cursor if this is the cursor position
+            if self._cursor_visible and self._cursor_byte_offset >= 0:
+                try:
+                    self._draw_cursor(painter, option, index, rect)
+                except Exception as e:
+                    pass  # Ignore cursor drawing errors
+
+            painter.restore()
+        except Exception as e:
+            # If painting fails, just restore and return
+            try:
+                painter.restore()
+            except:
+                pass
 
     def _draw_cursor(self, painter, option, index, rect):
         """Draw editing cursor at current position."""
-        # Only draw if this row contains the cursor
-        model = index.model()
-        bytes_per_row = model._bytes_per_row
-        header_length = model._header_length
-        arrangement_mode = model._arrangement_mode
-        row = index.row()
+        try:
+            # Debug: Check initial state
+            print(f"[DrawCursor] START: cursor_byte={self._cursor_byte_offset}, col={index.column()}, cursor_col={self._cursor_column}, visible={self._cursor_visible}")
 
-        # Calculate byte range for this row
-        if arrangement_mode == "header_length":
-            row_offset = model._get_row_offset(row)
-            data_start = row_offset + header_length
-            # Get data length for this row
-            if row_offset < model._file_size:
-                header_bytes = model._data[row_offset:row_offset + header_length]
-                try:
-                    data_len = int.from_bytes(header_bytes, byteorder='big')
-                except:
-                    data_len = 1
-                if data_len == 0:
-                    data_len = 1
-                data_end = data_start + data_len
-            else:
+            # Only draw if this row contains the cursor
+            model = index.model()
+            if model is None:
+                print(f"[DrawCursor] No model, returning")
                 return
-        else:
-            data_start = row * bytes_per_row
-            data_end = min(data_start + bytes_per_row, model._file_size)
 
-        # Check if cursor is in this row
-        cursor_byte = self._cursor_byte_offset
-        if cursor_byte < data_start or cursor_byte >= data_end:
-            return
+            bytes_per_row = getattr(model, '_bytes_per_row', 16)
+            if bytes_per_row <= 0:
+                bytes_per_row = 16
 
-        # Calculate byte position within the row
-        byte_in_row = cursor_byte - data_start
+            header_length = getattr(model, '_header_length', 0)
+            arrangement_mode = getattr(model, '_arrangement_mode', 'equal_frame')
+            file_size = getattr(model, '_file_size', 0)
+            row = index.row()
 
-        fm = painter.fontMetrics()
-        text_padding = 5
+            # Calculate byte range for this row
+            if arrangement_mode == "header_length":
+                row_offset = model._get_row_offset(row)
+                data_start = row_offset + header_length
+                if row_offset < file_size:
+                    header_bytes = model._data[row_offset:row_offset + header_length]
+                    try:
+                        data_len = int.from_bytes(header_bytes, byteorder='big')
+                    except:
+                        data_len = 1
+                    if data_len == 0:
+                        data_len = 1
+                    data_end = data_start + data_len
+                else:
+                    return
+            else:
+                data_start = row * bytes_per_row
+                data_end = min(data_start + bytes_per_row, file_size)
 
-        if index.column() == 0 and self._cursor_column == 0:
-            # Cursor in hex column
-            # Format: "00000000  AA BB CC DD EE FF 00 11"
-            offset_chars = 10  # "00000000  "
-            # Each byte is 3 chars: "AA "
-            hex_pos = offset_chars + byte_in_row * 3
+            # Check if cursor is in this row
+            cursor_byte = self._cursor_byte_offset
 
-            # Calculate x position
-            display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-            if hex_pos <= len(display_text):
-                prefix = display_text[:hex_pos]
-                cursor_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+            # Debug output
+            print(f"[DrawCursor] row={row}, cursor_byte={cursor_byte}, data_start={data_start}, data_end={data_end}")
 
-                # Adjust for nibble position (high or low nibble within the byte)
-                nibble_offset = fm.horizontalAdvance("0") * (1 - self._nibble_pos)
-                cursor_x += nibble_offset
+            # Safety check for empty files
+            if file_size == 0:
+                if row == 0 and cursor_byte == 0:
+                    data_start = 0
+                    data_end = 1
+                else:
+                    return
 
-                # Draw cursor line
-                cursor_height = rect.height() - 4
-                cursor_y = rect.y() + 2
-                painter.setPen(QPen(self.CURSOR_COLOR, 2))
-                painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
+            if cursor_byte < data_start or cursor_byte >= data_end:
+                print(f"[DrawCursor] Cursor not in this row, returning")
+                return
 
-        elif index.column() == 1 and self._cursor_column == 1:
-            # Cursor in ASCII column
-            display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-            if byte_in_row < len(display_text):
-                prefix = display_text[:byte_in_row]
-                cursor_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+            # Calculate byte position within the row
+            byte_in_row = cursor_byte - data_start
 
-                # Draw cursor line
-                cursor_height = rect.height() - 4
-                cursor_y = rect.y() + 2
-                painter.setPen(QPen(self.CURSOR_COLOR, 2))
-                painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
+            fm = painter.fontMetrics()
+            text_padding = 5
+
+            print(f"[DrawCursor] Checking columns: index.col={index.column()}, cursor_col={self._cursor_column}")
+
+            if index.column() == 0 and self._cursor_column == 0:
+                # Cursor in hex column
+                display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+                offset_chars = 10  # "00000000  "
+                hex_pos = offset_chars + byte_in_row * 3
+
+                if hex_pos <= len(display_text):
+                    prefix = display_text[:hex_pos]
+                    cursor_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+
+                    # Adjust for nibble position
+                    # nibble_pos=0: high nibble (first digit) - offset 0
+                    # nibble_pos=1: low nibble (second digit) - offset char_width
+                    char_width = fm.horizontalAdvance("0")
+                    nibble_offset = char_width * self._nibble_pos
+                    cursor_x += nibble_offset
+
+                    # Draw cursor line
+                    cursor_height = rect.height() - 4
+                    cursor_y = rect.y() + 2
+
+                    # Debug: print cursor position
+                    print(f"[DrawCursor] Drawing at x={cursor_x}, y={cursor_y}, row={row}, byte_in_row={byte_in_row}")
+
+                    painter.setPen(QPen(self.CURSOR_COLOR, 2))
+                    painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
+
+            elif index.column() == 1 and self._cursor_column == 1:
+                # Cursor in ASCII column
+                display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+                if byte_in_row < len(display_text):
+                    prefix = display_text[:byte_in_row]
+                    cursor_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+
+                    # Draw cursor line
+                    cursor_height = rect.height() - 4
+                    cursor_y = rect.y() + 2
+                    print(f"[DrawCursor] ASCII cursor at x={cursor_x}, y={cursor_y}")
+                    painter.setPen(QPen(self.CURSOR_COLOR, 2))
+                    painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
+        except Exception as e:
+            print(f"[DrawCursor] Error: {e}")
 
     def sizeHint(self, option, index):
         """Return cell size hint."""
@@ -877,6 +922,7 @@ class HexView(QTableView):
         # Cursor position for editing
         self._cursor_byte_offset = 0  # Current byte offset in file
         self._nibble_pos = 0  # 0 = high nibble, 1 = low nibble
+        self._cursor_column = 0  # 0 = hex column, 1 = ASCII column
 
         # Selection mode
         self._selection_mode = self.SELECTION_CONTINUOUS
@@ -901,8 +947,8 @@ class HexView(QTableView):
 
         # Setup appearance
         self.setShowGrid(False)
-        self.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
+        self.setSelectionBehavior(QTableView.SelectionBehavior.SelectItems)
+        self.setSelectionMode(QTableView.SelectionMode.NoSelection)
         self.verticalHeader().setVisible(False)
         # Hide horizontal header (we use custom ruler instead)
         self.horizontalHeader().setVisible(False)
@@ -923,10 +969,11 @@ class HexView(QTableView):
             }
             QTableView::item {
                 padding: 0 5px;
+                background-color: transparent;
             }
             QTableView::item:selected {
-                background-color: #264f78;
-                color: #ffffff;
+                background-color: transparent;
+                color: #d4d4d4;
             }
         """)
 
@@ -940,6 +987,9 @@ class HexView(QTableView):
         # Connect selection changed to update highlight
         # Use selectionModel().selectionChanged for PyQt6
         self.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        
+        # Clear any default selection
+        self.selectionModel().clearSelection()
 
     def set_selection_mode(self, mode: str):
         """Set selection mode."""
@@ -986,42 +1036,54 @@ class HexView(QTableView):
         """Handle hex character input in hex column."""
         # Validate input
         if char.upper() not in '0123456789ABCDEF':
+            print(f"[HexInput] Invalid char: {char}")
             return
 
         char = char.upper()
         byte_offset = self._cursor_byte_offset
         nibble = self._nibble_pos
 
+        # Debug output
+        print(f"[HexInput] START: char={char}, byte_offset={byte_offset}, nibble={nibble}")
+
         # Check if we have file handle
         if not self._file_handle:
+            print(f"[HexInput] No file handle!")
             return
 
         # Handle empty file - create first byte
         if self._model._file_size == 0:
+            print(f"[HexInput] Creating first byte for empty file")
             self._file_handle.insert(0, bytes([0]))
             self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
             self._cursor_byte_offset = 0
+            byte_offset = 0
 
-        # Check if we need to extend file
+        # Check if we need to extend file - always extend to allow continuous input
+        print(f"[HexInput] Checking: byte_offset={byte_offset}, file_size={self._model._file_size}")
         if byte_offset >= self._model._file_size:
-            if self._edit_mode == 'insert' or byte_offset == self._model._file_size:
-                # Extend file with a zero byte
-                self._file_handle.insert(byte_offset, bytes([0]))
-                self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
-            else:
-                return
+            # Extend file with zero bytes up to the cursor position
+            print(f"[HexInput] Extending file at offset {byte_offset}")
+            # Add enough zero bytes to reach the cursor position
+            bytes_to_add = (byte_offset - self._model._file_size) + 1
+            for i in range(bytes_to_add):
+                self._file_handle.insert(self._model._file_size, bytes([0]))
+            self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
 
         # Read current byte
         current_byte = self._model._data[byte_offset]
+        print(f"[HexInput] Current byte at {byte_offset}: 0x{current_byte:02X}")
 
         # Calculate new byte value
         nibble_value = int(char, 16)
         if nibble == 0:
             # High nibble
             new_byte = (nibble_value << 4) | (current_byte & 0x0F)
+            print(f"[HexInput] HIGH nibble: current=0x{current_byte:02X}, new=0x{new_byte:02X}")
         else:
             # Low nibble
             new_byte = (current_byte & 0xF0) | nibble_value
+            print(f"[HexInput] LOW nibble: current=0x{current_byte:02X}, new=0x{new_byte:02X}")
 
         # Write the byte
         self._file_handle.write(byte_offset, bytes([new_byte]))
@@ -1033,24 +1095,81 @@ class HexView(QTableView):
         if nibble == 0:
             # Move to low nibble
             self._nibble_pos = 1
+            print(f"[HexInput] Moving to LOW nibble, _nibble_pos={self._nibble_pos}")
+            # Update delegate cursor for nibble movement
+            self._update_delegate_cursor()
         else:
             # Move to next byte's high nibble
             self._nibble_pos = 0
             self._cursor_byte_offset = byte_offset + 1
+            print(f"[HexInput] Moving to next byte, _cursor_byte_offset={self._cursor_byte_offset}, _nibble_pos={self._nibble_pos}")
             # Move selection to next row if needed
             self._move_cursor_to_byte(self._cursor_byte_offset)
 
         # Refresh display
         self.viewport().update()
+        print(f"[HexInput] DONE: _cursor_byte_offset={self._cursor_byte_offset}, _nibble_pos={self._nibble_pos}")
+
+        # Refresh display
+        self.viewport().update()
+        
+        # Clear selection to prevent highlighting
+        self.selectionModel().blockSignals(True)
+        self.selectionModel().clearSelection()
+        self.selectionModel().blockSignals(False)
+        
+        # Force focus after input
+        self.setFocus()
+        self.activateWindow()
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        print(f"[HexInput] Focus set, hasFocus={self.hasFocus()}")
 
     def _move_cursor_to_byte(self, byte_offset: int):
         """Move cursor to specified byte offset."""
         bytes_per_row = self._model._bytes_per_row
         row = byte_offset // bytes_per_row
+        
+        # Block signals to prevent selection changes
+        self.selectionModel().blockSignals(True)
+        
+        # Clear any selection first
+        self.selectionModel().clearSelection()
+        
         # Set current index
         index = self._model.index(row, 0)
         self.setCurrentIndex(index)
         self.scrollTo(index)
+        
+        # Unblock signals
+        self.selectionModel().blockSignals(False)
+        
+        # Update delegate cursor
+        self._update_delegate_cursor()
+        # Refresh display and maintain focus
+        self.viewport().update()
+        self.setFocus()
+
+    def _update_delegate_cursor(self):
+        """Update the delegate's cursor position for drawing."""
+        try:
+            # Use the tracked cursor column (0 = hex, 1 = ASCII)
+            # This is set based on where the user clicked
+            column = getattr(self, '_cursor_column', 0)
+            byte_offset = getattr(self, '_cursor_byte_offset', 0)
+            nibble_pos = getattr(self, '_nibble_pos', 0)
+
+            # Debug output
+            print(f"[HexView] Updating delegate cursor: byte={byte_offset}, nibble={nibble_pos}, col={column}")
+
+            # Update delegate cursor position
+            if hasattr(self, '_delegate') and self._delegate is not None:
+                self._delegate.set_cursor_position(
+                    byte_offset,
+                    nibble_pos,
+                    column
+                )
+        except Exception as e:
+            print(f"Error updating delegate cursor: {e}")
 
     def _handle_ascii_input(self, char: str):
         """Handle ASCII character input in ASCII column."""
@@ -1072,14 +1191,13 @@ class HexView(QTableView):
             byte_offset = 0
             self._cursor_byte_offset = 0
 
-        # Check if we need to extend file
+        # Check if we need to extend file - always extend to allow continuous input
         if byte_offset >= self._model._file_size:
-            if self._edit_mode == 'insert' or byte_offset == self._model._file_size:
-                # Extend file with a zero byte
-                self._file_handle.insert(byte_offset, bytes([0]))
-                self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
-            else:
-                return
+            # Extend file with zero bytes up to the cursor position
+            bytes_to_add = (byte_offset - self._model._file_size) + 1
+            for i in range(bytes_to_add):
+                self._file_handle.insert(self._model._file_size, bytes([0]))
+            self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
 
         # Write the character's byte value directly
         self._file_handle.write(byte_offset, bytes([byte_value]))
@@ -1529,6 +1647,9 @@ class HexView(QTableView):
             if index.isValid():
                 bytes_per_row = self._model._bytes_per_row
 
+                # Track which column was clicked (0 = hex, 1 = ASCII)
+                self._cursor_column = index.column()
+
                 # Update cursor byte offset based on click position
                 byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
                 header_length = self._model._header_length
@@ -1562,7 +1683,16 @@ class HexView(QTableView):
                     self._continuous_end_byte_pos = self._block_start_byte_pos
                     # Manually set selection range
                     self._update_continuous_selection()
+                    # Update delegate cursor after click
+                    self._update_delegate_cursor()
+                    # Refresh viewport to show cursor
+                    self.viewport().update()
                     return  # Don't call super() - prevent default cell selection
+
+                # Update delegate cursor after click
+                self._update_delegate_cursor()
+                # Refresh viewport to show cursor
+                self.viewport().update()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -1785,10 +1915,27 @@ class HexView(QTableView):
         self._resize_columns()
 
         # Auto-select first cell and set focus
-        if self._model.rowCount() > 0:
-            first_index = self._model.index(0, 0)
-            self.setCurrentIndex(first_index)
+        try:
+            # Always set focus and initialize cursor, even for empty files
             self.setFocus()
+            self._cursor_byte_offset = 0
+            self._nibble_pos = 0
+            self._cursor_column = 0
+            
+            # Clear selection to avoid highlighting
+            self.selectionModel().blockSignals(True)
+            self.selectionModel().clearSelection()
+            
+            if self._model.rowCount() > 0:
+                first_index = self._model.index(0, 0)
+                self.setCurrentIndex(first_index)
+            
+            self.selectionModel().blockSignals(False)
+            
+            self._update_delegate_cursor()
+            self.viewport().update()
+        except Exception as e:
+            print(f"Error initializing cursor: {e}")
 
     def _reload_data(self):
         """Reload data from file handle."""
@@ -1879,6 +2026,8 @@ class HexView(QTableView):
     def keyPressEvent(self, event):
         """Handle key press."""
         from PyQt6.QtCore import Qt
+        idx = self.currentIndex()
+        print(f"[keyPressEvent] key={event.key()}, text={event.text()}, hasFocus={self.hasFocus()}, indexValid={idx.isValid()}, rowCount={self._model.rowCount()}")
 
         # Handle Insert key for mode toggle
         if event.key() == Qt.Key.Key_Insert:
@@ -1904,22 +2053,24 @@ class HexView(QTableView):
         # Handle text input
         if event.text() and len(event.text()) == 1:
             char = event.text()[0]
-            index = self.currentIndex()
+            # Use internal cursor state instead of currentIndex (which may be invalid)
+            cursor_col = getattr(self, '_cursor_column', 0)
+            cursor_byte = getattr(self, '_cursor_byte_offset', 0)
+            print(f"[keyPressEvent] cursor_col={cursor_col}, cursor_byte={cursor_byte}")
 
-            if index.isValid():
-                # Update cursor byte offset from current index before handling input
-                self._update_cursor_offset_from_index(index)
-
-                if index.column() == 0:
-                    # In hex column - handle hex input
-                    char_upper = char.upper()
-                    if char_upper in '0123456789ABCDEF':
-                        self._handle_hex_input(char_upper)
-                        return
-                elif index.column() == 1:
-                    # In ASCII column - handle ASCII input
-                    self._handle_ascii_input(char)
+            # Process input based on tracked cursor state
+            if cursor_col == 0:
+                # In hex column - handle hex input
+                char_upper = char.upper()
+                if char_upper in '0123456789ABCDEF':
+                    self._handle_hex_input(char_upper)
+                    event.accept()
                     return
+            elif cursor_col == 1:
+                # In ASCII column - handle ASCII input
+                self._handle_ascii_input(char)
+                event.accept()
+                return
 
         # Let parent handle most keys
         super().keyPressEvent(event)
@@ -1943,6 +2094,9 @@ class HexView(QTableView):
         arrangement_mode = self._model._arrangement_mode
         row = index.row()
 
+        # Track cursor column from index
+        self._cursor_column = index.column()
+
         if arrangement_mode == "header_length":
             row_offset = self._model._get_row_offset(row)
             # For header_length mode, use the stored byte position or 0
@@ -1952,6 +2106,10 @@ class HexView(QTableView):
             # For equal frame mode, calculate from row and preserve byte-in-row position
             byte_in_row = self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset > 0 else 0
             self._cursor_byte_offset = row * bytes_per_row + byte_in_row
+
+        # Update delegate cursor and refresh
+        self._update_delegate_cursor()
+        self.viewport().update()
 
     # ==================== Clipboard Operations ====================
 
@@ -2163,10 +2321,14 @@ class HexViewWidget(QWidget):
         """Set file handle to display."""
         self._file_handle = file_handle
         self._hex_view.set_file_handle(file_handle)
-        # Update ruler settings
-        self._ruler.set_bytes_per_row(self._hex_view._model._bytes_per_row)
-        self._ruler.set_header_length(self._hex_view._model._header_length)
-        self._ruler.set_column_width(self._hex_view.columnWidth(0))
+        # Update ruler settings with safety checks
+        try:
+            if hasattr(self._hex_view, '_model') and self._hex_view._model is not None:
+                self._ruler.set_bytes_per_row(self._hex_view._model._bytes_per_row)
+                self._ruler.set_header_length(self._hex_view._model._header_length)
+                self._ruler.set_column_width(self._hex_view.columnWidth(0))
+        except Exception as e:
+            print(f"Error updating ruler settings: {e}")
 
     @property
     def hex_view(self):
