@@ -195,7 +195,8 @@ class HexTableModel(QAbstractTableModel):
     def _update_row_count(self):
         """Update row count based on arrangement mode."""
         if self._file_size == 0:
-            self._row_count = 0
+            # Show at least 1 row for empty files (new files) so user can start typing
+            self._row_count = 1
         elif self._arrangement_mode == "equal_frame":
             # 等长帧模式：每行固定字节数
             self._row_count = (self._file_size + self._bytes_per_row - 1) // self._bytes_per_row
@@ -291,6 +292,19 @@ class HexTableModel(QAbstractTableModel):
                 row_end_offset = min(row_offset + header_len + data_len, self._file_size)
 
         if row_offset >= self._file_size:
+            # For empty files (file_size == 0), show empty row with placeholder
+            if self._file_size == 0 and row == 0:
+                if role == Qt.ItemDataRole.DisplayRole:
+                    if col == 0:
+                        # Show offset "00000000" and empty hex area
+                        return "00000000  " + "   " * (self._bytes_per_row - 1) + "  "
+                    elif col == 1:
+                        # Show empty ASCII area
+                        return " " * self._bytes_per_row
+                elif role == Qt.ItemDataRole.FontRole:
+                    font = QFont("Menlo", 11)
+                    font.setStyleHint(QFont.StyleHint.Monospace)
+                    return font
             return None
 
         # For highlighting, calculate data position in the row
@@ -752,6 +766,9 @@ class HexView(QTableView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._file_handle = None
+
+        # Enable keyboard focus
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         # Edit mode: 'overwrite' or 'insert'
         self._edit_mode = 'overwrite'  # Default to overwrite mode
@@ -1666,6 +1683,12 @@ class HexView(QTableView):
         # Resize columns based on bytes_per_row
         self._resize_columns()
 
+        # Auto-select first cell and set focus
+        if self._model.rowCount() > 0:
+            first_index = self._model.index(0, 0)
+            self.setCurrentIndex(first_index)
+            self.setFocus()
+
     def _reload_data(self):
         """Reload data from file handle."""
         if self._file_handle:
@@ -1822,11 +1845,12 @@ class HexView(QTableView):
         if arrangement_mode == "header_length":
             row_offset = self._model._get_row_offset(row)
             # For header_length mode, use the stored byte position or 0
-            byte_in_row = getattr(self, '_cursor_byte_in_row', 0)
+            byte_in_row = self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset > 0 else 0
             self._cursor_byte_offset = row_offset + header_length + byte_in_row
         else:
-            # For equal frame mode, calculate from current nibble position
-            self._cursor_byte_offset = row * bytes_per_row + (self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset > 0 else 0)
+            # For equal frame mode, calculate from row and preserve byte-in-row position
+            byte_in_row = self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset > 0 else 0
+            self._cursor_byte_offset = row * bytes_per_row + byte_in_row
 
     # ==================== Clipboard Operations ====================
 
