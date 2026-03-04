@@ -928,6 +928,42 @@ class HexView(QTableView):
         self.setCurrentIndex(index)
         self.scrollTo(index)
 
+    def _handle_ascii_input(self, char: str):
+        """Handle ASCII character input in ASCII column."""
+        # Only accept printable ASCII characters (32-126)
+        byte_value = ord(char)
+        if byte_value < 32 or byte_value > 126:
+            return
+
+        byte_offset = self._cursor_byte_offset
+
+        # Check if we have file data
+        if not self._file_handle or self._model._file_size == 0:
+            return
+
+        # Check if we need to extend file
+        if byte_offset >= self._model._file_size:
+            if self._edit_mode == 'insert' or byte_offset == self._model._file_size:
+                # Extend file with a zero byte
+                self._file_handle.insert(byte_offset, bytes([0]))
+                self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
+            else:
+                return
+
+        # Write the character's byte value directly
+        self._file_handle.write(byte_offset, bytes([byte_value]))
+
+        # Update model data
+        self._model._data[byte_offset] = byte_value
+
+        # Move to next byte
+        self._cursor_byte_offset = byte_offset + 1
+        self._nibble_pos = 0
+        self._move_cursor_to_byte(self._cursor_byte_offset)
+
+        # Refresh display
+        self.viewport().update()
+
     def _show_context_menu(self, pos):
         """Show context menu at position."""
         from PyQt6.QtWidgets import QMenu
@@ -1699,14 +1735,21 @@ class HexView(QTableView):
             self.toggle_edit_mode()
             return
 
-        # Handle hex input (0-9, A-F)
+        # Handle text input
         if event.text() and len(event.text()) == 1:
-            char = event.text()[0].upper()
-            if char in '0123456789ABCDEF':
-                index = self.currentIndex()
-                if index.isValid() and index.column() == 0:
-                    # In hex column
-                    self._handle_hex_input(char)
+            char = event.text()[0]
+            index = self.currentIndex()
+
+            if index.isValid():
+                if index.column() == 0:
+                    # In hex column - handle hex input
+                    char_upper = char.upper()
+                    if char_upper in '0123456789ABCDEF':
+                        self._handle_hex_input(char_upper)
+                        return
+                elif index.column() == 1:
+                    # In ASCII column - handle ASCII input
+                    self._handle_ascii_input(char)
                     return
 
         # Let parent handle most keys
