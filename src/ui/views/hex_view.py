@@ -756,6 +756,10 @@ class HexView(QTableView):
         # Edit mode: 'overwrite' or 'insert'
         self._edit_mode = 'overwrite'  # Default to overwrite mode
 
+        # Cursor position for editing
+        self._cursor_byte_offset = 0  # Current byte offset in file
+        self._nibble_pos = 0  # 0 = high nibble, 1 = low nibble
+
         # Selection mode
         self._selection_mode = self.SELECTION_CONTINUOUS
 
@@ -859,6 +863,70 @@ class HexView(QTableView):
     def get_edit_mode(self) -> str:
         """Get current edit mode."""
         return self._edit_mode
+
+    def _handle_hex_input(self, char: str):
+        """Handle hex character input in hex column."""
+        # Validate input
+        if char.upper() not in '0123456789ABCDEF':
+            return
+
+        char = char.upper()
+        byte_offset = self._cursor_byte_offset
+        nibble = self._nibble_pos
+
+        # Check if we have file data
+        if not self._file_handle or self._model._file_size == 0:
+            return
+
+        # Check if we need to extend file
+        if byte_offset >= self._model._file_size:
+            if self._edit_mode == 'insert' or byte_offset == self._model._file_size:
+                # Extend file with a zero byte
+                self._file_handle.insert(byte_offset, bytes([0]))
+                self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
+            else:
+                return
+
+        # Read current byte
+        current_byte = self._model._data[byte_offset]
+
+        # Calculate new byte value
+        nibble_value = int(char, 16)
+        if nibble == 0:
+            # High nibble
+            new_byte = (nibble_value << 4) | (current_byte & 0x0F)
+        else:
+            # Low nibble
+            new_byte = (current_byte & 0xF0) | nibble_value
+
+        # Write the byte
+        self._file_handle.write(byte_offset, bytes([new_byte]))
+
+        # Update model data
+        self._model._data[byte_offset] = new_byte
+
+        # Move cursor
+        if nibble == 0:
+            # Move to low nibble
+            self._nibble_pos = 1
+        else:
+            # Move to next byte's high nibble
+            self._nibble_pos = 0
+            self._cursor_byte_offset = byte_offset + 1
+            # Move selection to next row if needed
+            self._move_cursor_to_byte(self._cursor_byte_offset)
+
+        # Refresh display
+        self.viewport().update()
+
+    def _move_cursor_to_byte(self, byte_offset: int):
+        """Move cursor to specified byte offset."""
+        bytes_per_row = self._model._bytes_per_row
+        row = byte_offset // bytes_per_row
+        # Set current index
+        index = self._model.index(row, 0)
+        self.setCurrentIndex(index)
+        self.scrollTo(index)
 
     def _show_context_menu(self, pos):
         """Show context menu at position."""
@@ -1630,6 +1698,16 @@ class HexView(QTableView):
         if event.key() == Qt.Key.Key_Insert:
             self.toggle_edit_mode()
             return
+
+        # Handle hex input (0-9, A-F)
+        if event.text() and len(event.text()) == 1:
+            char = event.text()[0].upper()
+            if char in '0123456789ABCDEF':
+                index = self.currentIndex()
+                if index.isValid() and index.column() == 0:
+                    # In hex column
+                    self._handle_hex_input(char)
+                    return
 
         # Let parent handle most keys
         super().keyPressEvent(event)
