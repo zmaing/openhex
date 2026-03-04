@@ -909,7 +909,7 @@ class HexView(QTableView):
         """Calculate byte position within a row from x position.
 
         Args:
-            x_pos: X position in widget coordinates
+            x_pos: X position in viewport coordinates
             bytes_per_row: Number of bytes per row
 
         Returns:
@@ -917,47 +917,80 @@ class HexView(QTableView):
         """
         if bytes_per_row <= 0:
             return 0
-        
-        # Get first visible row
+
+        # Get actual cell from visualRect
         first_row = max(0, self.rowAt(10))
         index = self.model().index(first_row, 0)
-        
         if not index.isValid():
             return 0
-        
-        # Get visual rect
+
         rect = self.visualRect(index)
-        
-        # Get display text
-        display_text = index.data(Qt.ItemDataRole.DisplayRole)
-        if not display_text:
-            return 0
-        
-        # Use QFontMetrics
-        font = self.font()
+
+        # Use the SAME font as delegate for accurate measurement
+        font = QFont("Menlo", 11)
+        font.setStyleHint(QFont.StyleHint.Monospace)
         fm = QFontMetrics(font)
-        
-        # Offset area: 10 chars (8 for offset + 2 spaces)
-        offset_chars = 10
-        text_padding = 5
-        
-        # Calculate position in hex area
-        offset_width = fm.horizontalAdvance("0") * offset_chars
-        x_in_hex = x_pos - text_padding - offset_width
-        
+
+        # Get the actual display text to measure widths accurately
+        display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+
+        # Constants matching paint method
+        text_padding = 5  # same as text_rect.adjusted(5, 0, -5, 0) in paint
+        offset_chars = 10  # "00000000  " = 10 characters
+
+        # X position relative to cell start
+        x_in_cell = x_pos - rect.x()
+
+        # X position relative to text start (after left padding)
+        x_in_text = x_in_cell - text_padding
+
+        if x_in_text <= 0:
+            return 0
+
+        # Measure actual offset width from display text
+        if len(display_text) >= offset_chars:
+            offset_width = fm.horizontalAdvance(display_text[:offset_chars])
+        else:
+            offset_width = fm.horizontalAdvance(display_text)
+
+        # X position relative to hex data start (after offset)
+        x_in_hex = x_in_text - offset_width
+
         if x_in_hex <= 0:
             return 0
-        
-        # Calculate hex area width
-        hex_area = rect.width() - text_padding - offset_width
-        
-        if hex_area <= 0:
-            return 0
-        
-        # Calculate byte position
-        byte_pos = int(x_in_hex / (hex_area / bytes_per_row))
-        
-        return max(0, min(byte_pos, bytes_per_row - 1))
+
+        # Calculate byte position by measuring actual text widths for each byte
+        # This exactly matches the paint method's approach
+        for byte_pos in range(bytes_per_row):
+            # Character position where this byte starts
+            char_start = offset_chars + byte_pos * 3
+            # Character position where this byte ends (inclusive)
+            # Last byte has no trailing space, so only 2 chars
+            if byte_pos == bytes_per_row - 1:
+                char_end = char_start + 2
+            else:
+                char_end = char_start + 3
+
+            # Measure actual pixel positions
+            if char_start <= len(display_text):
+                byte_start_x = fm.horizontalAdvance(display_text[:char_start]) - offset_width
+            else:
+                byte_start_x = fm.horizontalAdvance(display_text) - offset_width
+
+            if char_end <= len(display_text):
+                byte_end_x = fm.horizontalAdvance(display_text[:char_end]) - offset_width
+            else:
+                byte_end_x = fm.horizontalAdvance(display_text) - offset_width
+
+            # Check if x_in_hex falls within this byte's range
+            # Use middle of byte as the click target
+            byte_mid_x = (byte_start_x + byte_end_x) / 2
+
+            if x_in_hex < byte_mid_x:
+                return byte_pos
+
+        # If we're past all bytes, return the last one
+        return bytes_per_row - 1
 
     def _on_selection_changed(self, selected, deselected):
         """Handle selection changed to update highlight based on selection mode."""
@@ -1374,17 +1407,24 @@ class HexView(QTableView):
                 self._block_start_col = -1
                 self._block_end_byte_pos = -1
                 self._selection_finalized = True
+                self._is_selecting = False
             elif self._selection_mode == self.SELECTION_CONTINUOUS:
                 # Reset tracking
                 self._block_start_byte_pos = -1
                 self._continuous_end_byte_pos = -1
                 self._continuous_current_row = -1
                 self._selection_finalized = True
+                self._is_selecting = False
+                # Don't call super() - we handle selection ourselves
+                return
+            elif self._selection_mode == self.SELECTION_COLUMN:
+                self._is_selecting = False
+                # Don't call super() - we handle selection ourselves
+                return
             else:
                 self._block_start_byte_pos = -1
                 self._selection_finalized = True
-            # Mark that we're no longer selecting
-            self._is_selecting = False
+                self._is_selecting = False
         super().mouseReleaseEvent(event)
 
     def _do_column_selection(self, pos, end_pos=None):
@@ -1512,12 +1552,15 @@ class HexView(QTableView):
         self._resize_columns()
 
     def _resize_columns(self):
-        """Resize columns based on bytes_per_row and font width."""
+        """Resize columns based on bytes_per_row and actual font metrics."""
+        # Use the SAME font as delegate for accurate measurement
+        font = QFont("Menlo", 11)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        fm = QFontMetrics(font)
+
         # Calculate column 0 width (Offset + Hex)
         # Format: "00000000  AA BB CC ..." where each byte is 3 chars (2 hex + 1 space)
-        offset_chars = 8  # 8 hex digits for offset
-        space_between = 2  # space between offset and hex
-        padding = 10  # padding for cell margins
+        char_width = fm.horizontalAdvance("0")
 
         if self._model._arrangement_mode == "header_length":
             # 头长度模式：使用默认值 32 字节作为列宽
@@ -1528,10 +1571,14 @@ class HexView(QTableView):
         if bytes_per_row <= 0:
             return
 
-        hex_chars = bytes_per_row * 3 - 1  # hex representation
+        # Offset: "00000000  " = 10 characters
+        offset_width = char_width * 10
+        # Hex data: bytes_per_row * 3 - 1 characters (last byte has no trailing space)
+        hex_width = char_width * (bytes_per_row * 3 - 1)
+        # Cell padding (matching paint method's text_rect.adjusted(5, 0, -5, 0))
+        cell_padding = 10  # 5 on left + 5 on right
 
-        col0_chars = offset_chars + space_between + hex_chars
-        col0_width = int(col0_chars * self._font_width) + padding
+        col0_width = int(offset_width + hex_width + cell_padding)
 
         # Set column 0 to calculated width
         self.setColumnWidth(0, col0_width)
