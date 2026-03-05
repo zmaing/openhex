@@ -125,6 +125,8 @@ class HexTableModel(QAbstractTableModel):
     # Highlight color for search results
     HIGHLIGHT_COLOR = QColor("#515c6a")
     HIGHLIGHT_CURRENT_COLOR = QColor("#614d00")
+    # Color for modified bytes (red)
+    MODIFIED_COLOR = QColor("#ff6b6b")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,6 +151,9 @@ class HexTableModel(QAbstractTableModel):
         self._cursor_offset = 0  # Current byte offset
         self._cursor_nibble = 0  # 0 = high nibble, 1 = low nibble
 
+        # File handle for modification tracking
+        self._file_handle = None
+
         # Cached values
         self._row_count = 0
 
@@ -159,6 +164,14 @@ class HexTableModel(QAbstractTableModel):
         self._file_size = len(data)
         self._update_row_count()
         self.endResetModel()
+
+    def set_file_handle(self, file_handle):
+        """Set file handle for modification tracking.
+
+        Args:
+            file_handle: FileHandle instance with modification tracking
+        """
+        self._file_handle = file_handle
 
     def set_bytes_per_row(self, value: int):
         """Set bytes per row for equal frame mode."""
@@ -621,6 +634,13 @@ class HexViewDelegate(QAbstractItemDelegate):
         self._cursor_visible = True  # For blinking
         self._cursor_column = 0  # 0 = hex column, 1 = ASCII column
 
+        # File handle for modification tracking
+        self._file_handle = None
+
+        # Cache for modified offsets to avoid repeated lookups
+        self._modified_cache = None
+        self._modified_cache_version = -1
+
     def set_cursor_position(self, byte_offset: int, nibble_pos: int = 0, column: int = 0):
         """Set cursor position for drawing."""
         self._cursor_byte_offset = byte_offset
@@ -633,9 +653,36 @@ class HexViewDelegate(QAbstractItemDelegate):
         """Set cursor visibility (for blinking)."""
         self._cursor_visible = visible
 
+    def set_file_handle(self, file_handle):
+        """Set file handle for modification tracking.
+
+        Args:
+            file_handle: FileHandle instance with modification tracking
+        """
+        self._file_handle = file_handle
+        # Invalidate cache
+        self._modified_cache = None
+        self._modified_cache_version = -1
+
+    def _get_modified_offsets(self) -> set:
+        """Get modified offsets with caching."""
+        if self._file_handle is None:
+            return set()
+        
+        # Simple caching strategy: only fetch when cache is invalid
+        if self._modified_cache is None:
+            self._modified_cache = self._file_handle.get_modified_offsets()
+        
+        return self._modified_cache
+
+    def _invalidate_modified_cache(self):
+        """Invalidate the modified offsets cache."""
+        self._modified_cache = None
+
     def paint(self, painter, option, index):
         """Paint cell."""
         try:
+            
             painter.save()
 
             # Set font
@@ -754,6 +801,14 @@ class HexViewDelegate(QAbstractItemDelegate):
             painter.drawText(text_rect,
                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                             text)
+
+            # Draw modified bytes in red
+            
+            if self._file_handle:
+                try:
+                    self._draw_modified_bytes(painter, option, index, rect)
+                except Exception as e:
+                    pass  # Ignore modified byte drawing errors
 
             # Draw cursor if this is the cursor position
             if self._cursor_visible and self._cursor_byte_offset >= 0:
@@ -878,6 +933,135 @@ class HexViewDelegate(QAbstractItemDelegate):
                     painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
         except Exception as e:
             print(f"[DrawCursor] Error: {e}")
+
+    def _draw_modified_bytes(self, painter, option, index, rect):
+        """Draw modified bytes in red color.
+
+        This method re-draws bytes that have been modified (but not saved)
+        in red color on top of the already drawn text.
+        """
+        try:
+            model = index.model()
+            if model is None:
+                return
+
+            # Get modified offsets (cached)
+            modified_offsets = self._get_modified_offsets()
+            
+            if not modified_offsets:
+                return
+
+            # Get row parameters
+            bytes_per_row = getattr(model, '_bytes_per_row', 16)
+            if bytes_per_row <= 0:
+                bytes_per_row = 16
+
+            header_length = getattr(model, '_header_length', 0)
+            arrangement_mode = getattr(model, '_arrangement_mode', 'equal_frame')
+            file_size = getattr(model, '_file_size', 0)
+            row = index.row()
+
+            # Calculate byte range for this row
+            if arrangement_mode == "header_length":
+                row_offset = model._get_row_offset(row)
+                data_start = row_offset + header_length
+                if row_offset < file_size:
+                    header_bytes = model._data[row_offset:row_offset + header_length]
+                    try:
+                        data_len = int.from_bytes(header_bytes, byteorder='big')
+                    except:
+                        data_len = 1
+                    if data_len == 0:
+                        data_len = 1
+                    data_end = data_start + data_len
+                else:
+                    return
+            else:
+                data_start = row * bytes_per_row
+                data_end = min(data_start + bytes_per_row, file_size)
+
+            # Calculate how many bytes are in this row
+            row_byte_count = data_end - data_start
+            if row_byte_count <= 0:
+                return
+
+            fm = painter.fontMetrics()
+            text_padding = 5
+            modified_color = QColor("#ff6b6b")  # Red color for modified bytes
+
+            if index.column() == 0:
+                # Hex column - draw modified bytes in red
+                display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+                if not display_text:
+                    return
+
+                offset_chars = 10  # "00000000  "
+
+                # For each byte in this row, check if it's modified
+                for i in range(row_byte_count):
+                    byte_offset = data_start + i
+                    if byte_offset in modified_offsets:
+                        # Calculate position for this byte
+                        hex_start = offset_chars + i * 3
+                        hex_end = hex_start + 2  # 2 hex digits
+
+                        if hex_end <= len(display_text):
+                            # Get the hex text for this byte
+                            hex_text = display_text[hex_start:hex_end]
+                            
+                            # Calculate x position
+                            prefix = display_text[:hex_start]
+                            byte_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+                            
+                            # Calculate width
+                            byte_width = fm.horizontalAdvance(hex_text)
+                            
+                            # Clip and draw in red
+                            clip_rect = QRect(int(byte_x), rect.y(), int(byte_width), rect.height())
+                            painter.setClipRect(clip_rect)
+                            painter.setPen(modified_color)
+                            painter.drawText(rect.adjusted(5, 0, -5, 0),
+                                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                                            display_text)
+                            painter.setClipping(False)
+                            # Restore original color for next iterations
+                            fg_color = index.data(Qt.ItemDataRole.ForegroundRole)
+                            if fg_color:
+                                painter.setPen(fg_color)
+
+            elif index.column() == 1:
+                # ASCII column - draw modified characters in red
+                display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+                if not display_text:
+                    return
+
+                # For each byte in this row, check if it's modified
+                for i in range(min(row_byte_count, len(display_text))):
+                    byte_offset = data_start + i
+                    if byte_offset in modified_offsets:
+                        char = display_text[i]
+                        if char:
+                            # Calculate position for this character
+                            prefix = display_text[:i]
+                            char_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
+                            char_width = fm.horizontalAdvance(char)
+                            
+                            # Clip and draw in red
+                            clip_rect = QRect(int(char_x), rect.y(), int(char_width), rect.height())
+                            painter.setClipRect(clip_rect)
+                            painter.setPen(modified_color)
+                            painter.drawText(rect.adjusted(5, 0, -5, 0),
+                                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                                            display_text)
+                            painter.setClipping(False)
+                            # Restore original color for next iterations
+                            fg_color = index.data(Qt.ItemDataRole.ForegroundRole)
+                            if fg_color:
+                                painter.setPen(fg_color)
+
+        except Exception as e:
+            # Silently ignore errors to avoid breaking rendering
+            pass
 
     def sizeHint(self, option, index):
         """Return cell size hint."""
@@ -1907,6 +2091,11 @@ class HexView(QTableView):
 
         # Connect signals
         file_handle.data_changed.connect(self._on_data_changed)
+        file_handle.modifications_changed.connect(self._on_modifications_changed)
+
+        # Propagate file_handle to model and delegate
+        self._model.set_file_handle(file_handle)
+        self._delegate.set_file_handle(file_handle)
 
         # Load data
         self._reload_data()
@@ -1947,6 +2136,13 @@ class HexView(QTableView):
     def _on_data_changed(self, start, end):
         """Handle data change."""
         self._reload_data()
+
+    def _on_modifications_changed(self):
+        """Handle modification tracking change."""
+        # Invalidate delegate cache
+        self._delegate._invalidate_modified_cache()
+        # Trigger repaint
+        self.viewport().update()
 
     def set_bytes_per_row(self, value: int):
         """Set bytes per row for equal frame mode."""

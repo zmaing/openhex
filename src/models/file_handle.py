@@ -48,6 +48,7 @@ class FileHandle(QObject):
     state_changed = pyqtSignal(FileState)
     cursor_moved = pyqtSignal(int)  # offset
     selection_changed = pyqtSignal(int, int)  # start, end
+    modifications_changed = pyqtSignal()  # Signal when modified offsets change
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -68,6 +69,10 @@ class FileHandle(QObject):
         # For large file handling
         self._use_mmap_threshold: int = 100 * 1024 * 1024  # 100MB
         self._page_size: int = 4096
+
+        # Modification tracking - track which bytes have been modified but not saved
+        self._modified_offsets: set[int] = set()
+        self._original_data: Optional[bytearray] = None  # Snapshot of original data
 
         # Bookmarks
         self._bookmarks: List[int] = []
@@ -217,6 +222,9 @@ class FileHandle(QObject):
             with open(self._file_path, 'rb') as f:
                 self._data = bytearray(f.read())
             self._is_mapped = False
+            # Create snapshot of original data for modification tracking
+            self._original_data = bytearray(self._data)
+            self._modified_offsets.clear()
             logger.info(f"Loaded small file: {self._file_name} ({self._file_size} bytes)")
             return True
         except Exception as e:
@@ -229,6 +237,10 @@ class FileHandle(QObject):
             self._file = open(self._file_path, 'rb')
             self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
             self._is_mapped = True
+            # For mmap files, we don't create a full snapshot initially
+            # Modifications will be tracked when file is converted to memory
+            self._original_data = None
+            self._modified_offsets.clear()
             logger.info(f"Memory mapped large file: {self._file_name} ({self._file_size} bytes)")
             return True
         except Exception as e:
@@ -290,9 +302,6 @@ class FileHandle(QObject):
         Returns:
             Number of bytes written
         """
-        if self.is_empty:
-            return 0
-
         if self._is_mapped:
             # For mmap files, we need to use a temp file for modifications
             return self._write_large_file(offset, data)
@@ -313,15 +322,23 @@ class FileHandle(QObject):
         new_len = max(len(self._data), offset + data_len)
 
         if offset + data_len <= len(self._data):
-            # Replace existing data
+            # Replace existing data - track modified offsets
+            for i in range(offset, offset + data_len):
+                self._modified_offsets.add(i)
             self._data[offset:offset + data_len] = data
         else:
-            # Need to extend
+            # Need to extend - new bytes are considered modified
+            for i in range(offset, offset + data_len):
+                self._modified_offsets.add(i)
             old_data = self._data[:offset]
             self._data = bytearray(old_data + data)
 
+        # Update file size
+        self._file_size = len(self._data)
+        
         self.file_state = FileState.MODIFIED
         self.data_changed.emit(offset, offset + data_len)
+        self.modifications_changed.emit()
         return data_len
 
     def _write_large_file(self, offset: int, data: bytes) -> int:
@@ -349,10 +366,15 @@ class FileHandle(QObject):
             # Write data
             self._mmap[offset:offset + len(data)] = data
 
+            # Track modified offsets
+            for i in range(offset, offset + len(data)):
+                self._modified_offsets.add(i)
+
             # Update tracking
             self._is_mapped = False  # Now using copy
             self.file_state = FileState.MODIFIED
             self.data_changed.emit(offset, offset + len(data))
+            self.modifications_changed.emit()
 
             return len(data)
         except Exception as e:
@@ -383,10 +405,14 @@ class FileHandle(QObject):
         elif offset > len(self._data):
             offset = len(self._data)
 
+        # Adjust modified offsets for insertion
+        self._adjust_modified_offsets_for_insertion(offset, data_len)
+
         self._data[offset:offset] = data
         self._file_size = len(self._data)
         self.file_state = FileState.MODIFIED
         self.data_changed.emit(offset, offset + data_len)
+        self.modifications_changed.emit()
 
         return data_len
 
@@ -411,10 +437,14 @@ class FileHandle(QObject):
         if length == 0:
             return 0
 
+        # Remove deleted offsets from tracking
+        self._remove_modified_offsets_for_deletion(offset, length)
+
         del self._data[offset:offset + length]
         self._file_size = len(self._data)
         self.file_state = FileState.MODIFIED
         self.data_changed.emit(offset, offset + length)
+        self.modifications_changed.emit()
 
         return length
 
@@ -422,6 +452,9 @@ class FileHandle(QObject):
         """Convert mmap file to in-memory."""
         if self._mmap:
             self._data = bytearray(self._mmap[:])
+            # Create snapshot of original data for modification tracking
+            self._original_data = bytearray(self._data)
+            self._modified_offsets.clear()
             self._mmap.close()
             self._mmap = None
             self._is_mapped = False
@@ -461,6 +494,12 @@ class FileHandle(QObject):
             self._file_path = save_path
             self._file_name = os.path.basename(save_path)
             self.file_state = FileState.UNCHANGED
+
+            # Clear modification tracking
+            self._modified_offsets.clear()
+            # Update original data snapshot
+            self._original_data = bytearray(self._data) if not self._is_mapped else None
+            self.modifications_changed.emit()
 
             # Clean up temp file
             if self._temp_file:
@@ -574,6 +613,91 @@ class FileHandle(QObject):
         """Clear jump history."""
         self._jump_history.clear()
         self._jump_index = -1
+
+    # Modification tracking methods
+
+    def is_byte_modified(self, offset: int) -> bool:
+        """
+        Check if a byte at the given offset has been modified.
+
+        Args:
+            offset: Byte offset to check
+
+        Returns:
+            True if the byte has been modified, False otherwise
+        """
+        if not self._original_data or self._is_mapped:
+            return False
+        return offset in self._modified_offsets
+
+    def get_modified_offsets(self) -> set[int]:
+        """
+        Get the set of all modified byte offsets.
+
+        Returns:
+            Set of modified byte offsets
+        """
+        return self._modified_offsets.copy()
+
+    def _adjust_modified_offsets_for_insertion(self, insert_offset: int, insert_length: int):
+        """
+        Adjust modified offsets when data is inserted.
+
+        All offsets after the insertion point are shifted by insert_length.
+
+        Args:
+            insert_offset: Offset where data is inserted
+            insert_length: Number of bytes inserted
+        """
+        if not self._modified_offsets:
+            return
+
+        # Create a new set with adjusted offsets
+        new_offsets = set()
+        for offset in self._modified_offsets:
+            if offset >= insert_offset:
+                new_offsets.add(offset + insert_length)
+            else:
+                new_offsets.add(offset)
+
+        self._modified_offsets = new_offsets
+
+        # Adjust original data snapshot for comparison
+        if self._original_data:
+            # Insert placeholder bytes in original data to maintain alignment
+            self._original_data[insert_offset:insert_offset] = b'\x00' * insert_length
+
+    def _remove_modified_offsets_for_deletion(self, delete_offset: int, delete_length: int):
+        """
+        Remove modified offsets when data is deleted.
+
+        Args:
+            delete_offset: Offset where deletion starts
+            delete_length: Number of bytes deleted
+        """
+        if not self._modified_offsets:
+            return
+
+        delete_end = delete_offset + delete_length
+
+        # Remove offsets that are deleted and adjust others
+        new_offsets = set()
+        for offset in self._modified_offsets:
+            if offset < delete_offset:
+                # Before deletion: keep unchanged
+                new_offsets.add(offset)
+            elif offset < delete_end:
+                # Within deleted range: remove
+                continue
+            else:
+                # After deletion: shift back
+                new_offsets.add(offset - delete_length)
+
+        self._modified_offsets = new_offsets
+
+        # Adjust original data snapshot for comparison
+        if self._original_data and len(self._original_data) > delete_offset:
+            del self._original_data[delete_offset:delete_end]
 
     def close(self):
         """Clean up resources."""
