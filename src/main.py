@@ -217,27 +217,32 @@ class HexForgeMainWindow(QMainWindow):
 
         # Display modes
         display_menu = view_menu.addMenu(self._tr("menu_display_mode"))
+        self._display_mode_group = QActionGroup(self)
+        self._display_mode_group.setExclusive(True)
+        self._display_mode_group.triggered.connect(self._on_display_mode_action_triggered)
+        self._display_mode_actions = {}
 
-        hex_action = QAction(self._tr("menu_hexadecimal"), self)
-        hex_action.setCheckable(True)
-        hex_action.setChecked(True)
-        hex_action.triggered.connect(lambda: self._on_display_mode_changed("hex"))
-        display_menu.addAction(hex_action)
+        display_mode_specs = [
+            ("hex", self._tr("menu_hexadecimal"), True),
+            ("binary", self._tr("menu_binary"), False),
+            ("octal", self._tr("menu_octal"), False),
+        ]
 
-        binary_action = QAction(self._tr("menu_binary"), self)
-        binary_action.setCheckable(True)
-        binary_action.triggered.connect(lambda: self._on_display_mode_changed("binary"))
-        display_menu.addAction(binary_action)
+        for mode, label, checked in display_mode_specs:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(checked)
+            action.setData(mode)
+            action.setActionGroup(self._display_mode_group)
+            display_menu.addAction(action)
+            self._display_mode_actions[mode] = action
 
         ascii_action = QAction(self._tr("menu_ascii"), self)
         ascii_action.setCheckable(True)
-        ascii_action.triggered.connect(lambda: self._on_display_mode_changed("ascii"))
+        ascii_action.setChecked(True)
+        ascii_action.toggled.connect(self._on_ascii_visibility_toggled)
         display_menu.addAction(ascii_action)
-
-        octal_action = QAction(self._tr("menu_octal"), self)
-        octal_action.setCheckable(True)
-        octal_action.triggered.connect(lambda: self._on_display_mode_changed("octal"))
-        display_menu.addAction(octal_action)
+        self._ascii_visibility_action = ascii_action
 
         # Panels
         view_menu.addSeparator()
@@ -246,11 +251,14 @@ class HexForgeMainWindow(QMainWindow):
         show_file_tree_action.setChecked(True)
         show_file_tree_action.triggered.connect(self._on_toggle_file_tree)
         view_menu.addAction(show_file_tree_action)
+        self._show_file_tree_action = show_file_tree_action
 
         show_ai_panel_action = QAction(self._tr("menu_ai_panel"), self)
         show_ai_panel_action.setCheckable(True)
+        show_ai_panel_action.setChecked(True)
         show_ai_panel_action.triggered.connect(self._on_toggle_ai_panel)
         view_menu.addAction(show_ai_panel_action)
+        self._show_ai_panel_action = show_ai_panel_action
 
         # Folding submenu
         folding_menu = view_menu.addMenu(self._tr("menu_folding"))
@@ -647,7 +655,20 @@ class HexForgeMainWindow(QMainWindow):
 
     def _on_display_mode_changed(self, mode: str):
         """Handle display mode change."""
+        action = self._display_mode_actions.get(mode)
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
         self._hex_editor.set_display_mode(mode)
+
+    def _on_display_mode_action_triggered(self, action: QAction):
+        """Handle display mode action selection."""
+        mode = action.data()
+        if isinstance(mode, str):
+            self._on_display_mode_changed(mode)
+
+    def _on_ascii_visibility_toggled(self, checked: bool):
+        """Handle ASCII column visibility toggle."""
+        self._hex_editor.set_ascii_visible(checked)
 
     def _on_arrangement_length_changed(self, value: int):
         """Handle arrangement length change.

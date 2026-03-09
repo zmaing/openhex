@@ -241,7 +241,7 @@ def test_display_modes(stats):
         # Modify data
         doc.write(2, b'\xFF')
 
-        modes = ["hex", "binary", "ascii", "octal"]
+        modes = ["hex", "binary", "octal"]
         mode_results = {}
 
         for mode in modes:
@@ -251,6 +251,14 @@ def test_display_modes(stats):
             # Check if modifications are still tracked
             modified = len(doc.get_modified_offsets()) > 0
             mode_results[mode] = modified
+
+        window._hex_editor.set_ascii_visible(False)
+        QTest.qWait(10)
+        mode_results["ascii_hidden"] = len(doc.get_modified_offsets()) > 0
+
+        window._hex_editor.set_ascii_visible(True)
+        QTest.qWait(10)
+        mode_results["ascii_visible"] = len(doc.get_modified_offsets()) > 0
 
         all_tracked = all(mode_results.values())
         passed = all_tracked

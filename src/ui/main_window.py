@@ -41,7 +41,11 @@ class HexEditorMainWindow(QWidget):
         super().__init__(parent)
         self._document_model = DocumentModel()
         self._data_model = DataModel()
+        self._ascii_visible = True
         self._undo_stack = UndoStack()
+        self._splitter = None
+        self._file_tree_width = 250
+        self._right_panel_width = 280
 
         # AI Manager
         self._ai_manager = AIManager(self)
@@ -124,13 +128,13 @@ class HexEditorMainWindow(QWidget):
         main_layout.setSpacing(0)
 
         # Create splitter for resizable panels
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left panel - File browser
         from .panels.file_browser import FileBrowser
         self._file_browser = FileBrowser()
         self._file_browser.file_double_clicked.connect(self._on_file_open_request)
-        splitter.addWidget(self._file_browser)
+        self._splitter.addWidget(self._file_browser)
 
         # Center widget - Main editor area
         center_widget = QWidget()
@@ -175,16 +179,16 @@ class HexEditorMainWindow(QWidget):
         center_layout.addWidget(self._status_bar)
 
         center_widget.setLayout(center_layout)
-        splitter.addWidget(center_widget)
+        self._splitter.addWidget(center_widget)
 
         # Right panel - Info panels
         self._right_panel = self._create_right_panel()
-        splitter.addWidget(self._right_panel)
+        self._splitter.addWidget(self._right_panel)
 
         # Set initial sizes
-        splitter.setSizes([250, 700, 280])
+        self._splitter.setSizes([self._file_tree_width, 700, self._right_panel_width])
 
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(self._splitter)
         self.setLayout(main_layout)
 
     def _create_status_bar(self):
@@ -319,6 +323,48 @@ class HexEditorMainWindow(QWidget):
         widget.setMaximumWidth(320)
 
         return widget
+
+    def _set_side_panel_visibility(self, panel: QWidget, index: int, visible: bool,
+                                   size_attr: str, default_size: int):
+        """Show or hide a splitter side panel while preserving its width."""
+        if self._splitter is None:
+            return
+
+        sizes = self._splitter.sizes()
+        if len(sizes) <= index:
+            return
+
+        current_visible = panel.isVisible() and sizes[index] > 0
+        if current_visible == visible:
+            if visible and panel.isHidden():
+                panel.show()
+            return
+
+        center_index = 1
+        if visible:
+            panel.show()
+            restore_size = max(getattr(self, size_attr, default_size), 160)
+            sizes[index] = restore_size
+            sizes[center_index] = max(200, sizes[center_index] - restore_size)
+        else:
+            if sizes[index] > 0:
+                setattr(self, size_attr, sizes[index])
+            sizes[center_index] += sizes[index]
+            sizes[index] = 0
+            panel.hide()
+
+        self._splitter.setSizes(sizes)
+
+    def _is_side_panel_visible(self, panel: QWidget, index: int) -> bool:
+        """Return whether a splitter side panel is effectively visible."""
+        if self._splitter is None:
+            return panel.isVisible()
+
+        sizes = self._splitter.sizes()
+        if len(sizes) <= index:
+            return panel.isVisible()
+
+        return panel.isVisible() and sizes[index] > 0
 
     def _create_file_info_panel(self):
         """Create file information panel."""
@@ -819,7 +865,16 @@ class HexEditorMainWindow(QWidget):
         }
         if mode in mode_map:
             self._data_model.display_mode = mode_map[mode]
+            if mode == "ascii":
+                self._ascii_visible = True
             self._mode_label.setText(mode.upper())
+            self._update_hex_views()
+
+    def set_ascii_visible(self, visible: bool):
+        """Show or hide the ASCII column."""
+        visible = bool(visible)
+        if self._ascii_visible != visible:
+            self._ascii_visible = visible
             self._update_hex_views()
 
     def show_arrangement_dialog(self):
@@ -1169,13 +1224,23 @@ class HexEditorMainWindow(QWidget):
     # Panel toggles
     def toggle_file_tree(self):
         """Toggle file tree visibility."""
-        # Toggle left panel
-        pass
+        self._set_side_panel_visibility(
+            self._file_browser,
+            0,
+            not self._is_side_panel_visible(self._file_browser, 0),
+            "_file_tree_width",
+            250,
+        )
 
     def toggle_ai_panel(self):
         """Toggle AI panel visibility."""
-        # Toggle right panel
-        pass
+        self._set_side_panel_visibility(
+            self._right_panel,
+            2,
+            not self._is_side_panel_visible(self._right_panel, 2),
+            "_right_panel_width",
+            280,
+        )
 
     # Navigation
     def go_to_next_bookmark(self):
@@ -1449,6 +1514,8 @@ class HexEditorMainWindow(QWidget):
                 hex_view = widget.hex_view
                 if hasattr(hex_view, 'set_display_mode'):
                     hex_view.set_display_mode(current_mode)
+                if hasattr(hex_view, 'set_ascii_visible'):
+                    hex_view.set_ascii_visible(self._ascii_visible)
 
     def _on_close_tab(self, index: int):
         """Handle tab close."""

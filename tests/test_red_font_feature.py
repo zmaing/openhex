@@ -196,12 +196,17 @@ def test_different_display_modes():
         doc = window._hex_editor._document_model.current_document
         doc.write(2, b'\xFF')
 
-        modes = ["hex", "binary", "ascii", "octal"]
+        modes = ["hex", "binary", "octal"]
         for mode in modes:
             window._hex_editor.set_display_mode(mode)
             QTest.qWait(10)
 
-        log(True, f"Switched through all display modes: {modes}")
+        window._hex_editor.set_ascii_visible(False)
+        QTest.qWait(10)
+        window._hex_editor.set_ascii_visible(True)
+        QTest.qWait(10)
+
+        log(True, f"Switched through display modes and ASCII visibility: {modes}")
         return True
 
     finally:

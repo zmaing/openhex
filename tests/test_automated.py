@@ -119,12 +119,20 @@ class HexForgeTester:
             QTest.qWait(50)
 
             # Test display modes
-            modes = ["hex", "binary", "ascii", "octal"]
+            modes = ["hex", "binary", "octal"]
             for mode in modes:
                 self.window.set_display_mode(mode)
                 QTest.qWait(20)
                 current_mode = self.window._mode_label.text()
                 self.log(True, f"Display mode changed to: {mode}")
+
+            self.window.set_ascii_visible(False)
+            QTest.qWait(20)
+            self.log(True, "ASCII column hidden")
+
+            self.window.set_ascii_visible(True)
+            QTest.qWait(20)
+            self.log(True, "ASCII column shown")
 
             # Test arrangement modes
             self.window.set_arrangement_mode("equal_frame")

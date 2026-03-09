@@ -102,8 +102,9 @@ def main():
         print("\n[6] Testing view modes...")
         window._hex_editor.set_display_mode("binary")
         window._hex_editor.set_display_mode("hex")
-        window._hex_editor.set_display_mode("ascii")
         window._hex_editor.set_display_mode("octal")
+        window._hex_editor.set_ascii_visible(False)
+        window._hex_editor.set_ascii_visible(True)
         if log(True, "View modes switched"):
             passed += 1
         else:

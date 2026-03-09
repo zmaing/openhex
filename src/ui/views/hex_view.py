@@ -134,6 +134,7 @@ class HexTableModel(QAbstractTableModel):
         self._file_size = 0
         self._bytes_per_row = 32
         self._header_length = 0
+        self._max_data_bytes_per_row = 32
         self._start_offset = 0
         self._display_mode = self.MODE_HEX
 
@@ -214,15 +215,18 @@ class HexTableModel(QAbstractTableModel):
         if self._file_size == 0:
             # Show at least 1 row for empty files (new files) so user can start typing
             self._row_count = 1
+            self._max_data_bytes_per_row = self._bytes_per_row
         elif self._arrangement_mode == "equal_frame":
             # 等长帧模式：每行固定字节数
             self._row_count = (self._file_size + self._bytes_per_row - 1) // self._bytes_per_row
+            self._max_data_bytes_per_row = self._bytes_per_row
         elif self._arrangement_mode == "header_length":
             # 头长度模式：需要逐行计算
             count = 0
             offset = 0
             header_len = self._header_length
             max_rows = 100000  # 防止无限循环
+            max_data_len = 0
             while offset < self._file_size and count < max_rows:
                 if offset + header_len > self._file_size:
                     break
@@ -235,9 +239,13 @@ class HexTableModel(QAbstractTableModel):
                 # 如果 data_len 为 0，跳到下一行（添加一个默认长度）
                 if data_len == 0:
                     data_len = 1
+                data_start = offset + header_len
+                available_data = max(0, self._file_size - data_start)
+                max_data_len = max(max_data_len, min(data_len, available_data))
                 offset += header_len + data_len
                 count += 1
             self._row_count = count
+            self._max_data_bytes_per_row = max_data_len
 
     def _get_row_offset(self, row: int) -> int:
         """Get the file offset for a specific row in header length mode."""
@@ -435,6 +443,20 @@ class HexTableModel(QAbstractTableModel):
             self._display_mode = mode
             self.beginResetModel()
             self.endResetModel()
+
+    def get_chars_per_byte(self) -> int:
+        """Return the display width for each data byte in column 0."""
+        if self._display_mode == self.MODE_BINARY:
+            return 9
+        if self._display_mode == self.MODE_OCTAL:
+            return 4
+        if self._display_mode == self.MODE_ASCII:
+            return 3
+        return 3
+
+    def get_max_data_bytes_per_row(self) -> int:
+        """Return the widest row payload for layout calculations."""
+        return max(0, self._max_data_bytes_per_row)
 
     def set_search_results(self, results, current_index=-1):
         """Set search results for highlighting."""
@@ -1057,14 +1079,15 @@ class HexViewDelegate(QAbstractItemDelegate):
 
     def sizeHint(self, option, index):
         """Return cell size hint."""
-        # Column 0: Offset + Hex (dynamic width)
-        # Column 1: ASCII (will stretch)
+        fm = QFontMetrics(self._font)
+        cell_padding = 10  # 5 on left + 5 on right
+
         if index.column() == 0:
-            # Return a reasonable minimum width for offset + hex column
-            return QSize(400, 18)
-        else:
-            # ASCII column will stretch
-            return QSize(100, 18)
+            min_chars = 10 + 16 * 3
+            return QSize(fm.horizontalAdvance("0" * min_chars) + cell_padding, 18)
+
+        min_chars = 16
+        return QSize(fm.horizontalAdvance("A" * min_chars) + cell_padding, 18)
 
 
 class HexView(QTableView):
@@ -2110,6 +2133,7 @@ class HexView(QTableView):
             # Read all data (for now, optimization later)
             data = self._file_handle.read(0, self._file_handle.file_size)
             self._model.set_data(data)
+            self._resize_columns()
 
     def _on_data_changed(self, start, end):
         """Handle data change."""
@@ -2138,6 +2162,27 @@ class HexView(QTableView):
         self._model.set_arrangement_mode(mode, param)
         self._resize_columns()
 
+    def set_display_mode(self, mode: str):
+        """Set the display mode and refresh layout."""
+        self._model.set_display_mode(mode)
+        self._resize_columns()
+        self.viewport().update()
+
+    def set_ascii_visible(self, visible: bool):
+        """Show or hide the ASCII column."""
+        visible = bool(visible)
+        self.setColumnHidden(1, not visible)
+
+        current_index = self.currentIndex()
+        if not visible and self._cursor_column == 1:
+            self._cursor_column = 0
+            if current_index.isValid():
+                self.setCurrentIndex(self._model.index(current_index.row(), 0))
+            self._update_delegate_cursor()
+
+        self._resize_columns()
+        self.viewport().update()
+
     def _resize_columns(self):
         """Resize columns based on bytes_per_row and actual font metrics."""
         # Use the SAME font as delegate for accurate measurement
@@ -2145,33 +2190,35 @@ class HexView(QTableView):
         font.setStyleHint(QFont.StyleHint.Monospace)
         fm = QFontMetrics(font)
 
-        # Calculate column 0 width (Offset + Hex)
-        # Format: "00000000  AA BB CC ..." where each byte is 3 chars (2 hex + 1 space)
         char_width = fm.horizontalAdvance("0")
+        bytes_per_row = self._model.get_max_data_bytes_per_row()
 
-        if self._model._arrangement_mode == "header_length":
-            # 头长度模式：使用默认值 32 字节作为列宽
-            bytes_per_row = 32
+        header_chars = 0
+        if self._model._header_length > 0:
+            header_chars = self._model._header_length * 3 - 1
+
+        data_chars_per_byte = self._model.get_chars_per_byte()
+        if data_chars_per_byte > 0:
+            data_chars = bytes_per_row * data_chars_per_byte - 1
         else:
-            bytes_per_row = self._model._bytes_per_row
+            data_chars = 0
 
-        if bytes_per_row <= 0:
-            return
+        separator_chars = 1 if header_chars > 0 and data_chars > 0 else 0
 
         # Offset: "00000000  " = 10 characters
         offset_width = char_width * 10
-        # Hex data: bytes_per_row * 3 - 1 characters (last byte has no trailing space)
-        hex_width = char_width * (bytes_per_row * 3 - 1)
+        col0_text_width = char_width * (header_chars + separator_chars + data_chars)
         # Cell padding (matching paint method's text_rect.adjusted(5, 0, -5, 0))
         cell_padding = 10  # 5 on left + 5 on right
 
-        col0_width = int(offset_width + hex_width + cell_padding)
+        col0_width = int(offset_width + col0_text_width + cell_padding)
+        col1_width = int(char_width * max(4, bytes_per_row) + cell_padding)
 
-        # Set column 0 to calculated width
-        self.setColumnWidth(0, col0_width)
-
-        # Set column 1 to stretch (fills remaining space)
-        self.horizontalHeader().setStretchLastSection(True)
+        # Keep both columns content-sized so a narrow window scrolls horizontally
+        # instead of compressing the ASCII column and clipping characters.
+        self.horizontalHeader().setStretchLastSection(False)
+        self.setColumnWidth(0, max(col0_width, 80))
+        self.setColumnWidth(1, max(col1_width, 60))
 
     def get_offset_at_cursor(self) -> int:
         """Get file offset at current cursor position."""

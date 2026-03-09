@@ -5,7 +5,15 @@
       "Bash(find:*)",
       "Bash(ls -la:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(find/Users/zhanghaoli/.claude:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(pkill:*)",
+      "Bash(git checkout:*)",
+      "WebFetch(domain:minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com)",
+      "Bash(sed:*)",
+      "Bash(grep:*)"
     ]
   }
 }
