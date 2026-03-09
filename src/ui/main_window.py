@@ -203,29 +203,37 @@ class HexEditorMainWindow(QWidget):
         layout.setContentsMargins(8, 2, 8, 2)
         layout.setSpacing(16)
 
+        # Label style without border/frame
+        label_style = "QLabel { border: none; }"
+
         # Message label (for status messages)
         self._msg_label = QLabel("")
-        self._msg_label.setStyleSheet("color: #4ec9b0;")
+        self._msg_label.setStyleSheet("color: #4ec9b0; border: none;")
         layout.addWidget(self._msg_label)
 
         # Position label
         self._pos_label = QLabel("Offset: 0x00000000")
+        self._pos_label.setStyleSheet(label_style)
         layout.addWidget(self._pos_label)
 
         # Selection label
         self._selection_label = QLabel("Sel: 0 bytes")
+        self._selection_label.setStyleSheet(label_style)
         layout.addWidget(self._selection_label)
 
         # Arrangement mode label (shows bytes per row)
         self._arrangement_label = QLabel("等长帧: 32")
+        self._arrangement_label.setStyleSheet(label_style)
         layout.addWidget(self._arrangement_label)
 
         # Encoding label
         self._encoding_label = QLabel("UTF-8")
+        self._encoding_label.setStyleSheet(label_style)
         layout.addWidget(self._encoding_label)
 
         # File size label
         self._size_label = QLabel("Size: 0 B")
+        self._size_label.setStyleSheet(label_style)
         layout.addWidget(self._size_label)
 
         # Progress indicator
@@ -248,11 +256,12 @@ class HexEditorMainWindow(QWidget):
 
         # Mode label
         self._mode_label = QLabel("Hex")
+        self._mode_label.setStyleSheet(label_style)
         layout.addWidget(self._mode_label)
 
         # Edit mode label (OVR/INS)
         self._edit_mode_label = QLabel("OVR")
-        self._edit_mode_label.setStyleSheet("color: #569cd6; font-weight: bold;")
+        self._edit_mode_label.setStyleSheet("color: #569cd6; font-weight: bold; border: none;")
         layout.addWidget(self._edit_mode_label)
 
         bar.setLayout(layout)
