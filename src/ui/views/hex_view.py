@@ -4,7 +4,7 @@ Hex View
 Main hex view widget with virtual scrolling for efficient large file display.
 """
 
-from PyQt6.QtWidgets import QAbstractItemDelegate, QTableView, QScrollArea, QWidget, QVBoxLayout, QHBoxLayout, QStyle, QAbstractItemView
+from PyQt6.QtWidgets import QAbstractItemDelegate, QTableView, QWidget, QVBoxLayout, QHBoxLayout, QStyle, QAbstractItemView, QScrollBar
 from PyQt6.QtCore import Qt, QModelIndex, QRect, pyqtSignal, QSize, QAbstractTableModel, QVariant, QEvent
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QTextFormat, QPalette, QPen
 
@@ -137,6 +137,8 @@ class HexTableModel(QAbstractTableModel):
         self._max_data_bytes_per_row = 32
         self._start_offset = 0
         self._display_mode = self.MODE_HEX
+        self._horizontal_byte_offset = 0
+        self._visible_byte_count = self._bytes_per_row
 
         # Arrangement mode: "equal_frame" or "header_length"
         self._arrangement_mode = "equal_frame"
@@ -247,6 +249,40 @@ class HexTableModel(QAbstractTableModel):
             self._row_count = count
             self._max_data_bytes_per_row = max_data_len
 
+    def _get_row_bounds(self, row: int) -> tuple[int, int, int, int]:
+        """Return frame/data bounds for a row."""
+        if self._arrangement_mode == "equal_frame":
+            row_offset = row * self._bytes_per_row
+            row_end_offset = min(row_offset + self._bytes_per_row, self._file_size)
+        else:
+            row_offset = self._get_row_offset(row)
+            if row_offset >= self._file_size:
+                return row_offset, self._file_size, self._file_size, self._file_size
+
+            header_len = self._header_length
+            if row_offset + header_len > self._file_size:
+                row_end_offset = self._file_size
+            else:
+                header_bytes = self._data[row_offset:row_offset + header_len]
+                try:
+                    data_len = int.from_bytes(header_bytes, byteorder='big')
+                except:
+                    data_len = 0
+                if data_len == 0:
+                    data_len = 1
+                row_end_offset = min(row_offset + header_len + data_len, self._file_size)
+
+        data_row_offset = row_offset + self._header_length if self._arrangement_mode == "header_length" else row_offset
+        return row_offset, row_end_offset, data_row_offset, row_end_offset
+
+    def _get_visible_data_bounds(self, row_offset: int, row_end_offset: int) -> tuple[int, int, int, int]:
+        """Return full and visible data bounds for a row."""
+        data_start = row_offset + self._header_length
+        data_end = row_end_offset
+        window_start = min(data_end, data_start + self._horizontal_byte_offset)
+        window_end = min(data_end, window_start + self._visible_byte_count)
+        return data_start, data_end, window_start, window_end
+
     def _get_row_offset(self, row: int) -> int:
         """Get the file offset for a specific row in header length mode."""
         if row < 0:
@@ -273,6 +309,39 @@ class HexTableModel(QAbstractTableModel):
 
         return offset
 
+    def set_visible_byte_window(self, start: int, count: int):
+        """Set the shared horizontal byte window for both hex and ASCII columns."""
+        start = max(0, int(start))
+        count = max(1, int(count))
+        max_start = max(0, self.get_max_data_bytes_per_row() - count)
+        start = min(start, max_start)
+
+        if start == self._horizontal_byte_offset and count == self._visible_byte_count:
+            return
+
+        self._horizontal_byte_offset = start
+        self._visible_byte_count = count
+        if self._row_count > 0:
+            self.dataChanged.emit(self.index(0, 0), self.index(self._row_count - 1, 1))
+
+    def get_horizontal_byte_offset(self) -> int:
+        """Return the current shared horizontal byte offset."""
+        return max(0, self._horizontal_byte_offset)
+
+    def get_visible_byte_count(self) -> int:
+        """Return how many bytes are currently visible in the split panes."""
+        return max(1, self._visible_byte_count)
+
+    def get_max_horizontal_byte_offset(self) -> int:
+        """Return the furthest shared byte offset reachable by the horizontal scrollbar."""
+        return max(0, self.get_max_data_bytes_per_row() - self.get_visible_byte_count())
+
+    def get_hex_prefix_char_count(self) -> int:
+        """Return the fixed-width prefix length before row data in column 0."""
+        header_chars = self._header_length * 3 - 1 if self._header_length > 0 else 0
+        separator_chars = 1 if header_chars > 0 else 0
+        return 10 + header_chars + separator_chars
+
     def rowCount(self, parent=QModelIndex()):
         """Return number of rows."""
         return self._row_count
@@ -290,31 +359,7 @@ class HexTableModel(QAbstractTableModel):
         row = index.row()
         col = index.column()
 
-        # Calculate offset for this row based on arrangement mode
-        if self._arrangement_mode == "equal_frame":
-            # 等长帧模式：每行固定字节数 - no scroll offset needed, view handles it
-            total_per_row = self._bytes_per_row
-            row_offset = row * total_per_row
-            row_end_offset = min(row_offset + total_per_row, self._file_size)
-        else:
-            # 头长度模式：逐行计算偏移
-            row_offset = self._get_row_offset(row)
-            if row_offset >= self._file_size:
-                return None
-            # 获取该行的数据长度
-            header_len = self._header_length
-            if row_offset + header_len > self._file_size:
-                row_end_offset = self._file_size
-            else:
-                header_bytes = self._data[row_offset:row_offset + header_len]
-                try:
-                    data_len = int.from_bytes(header_bytes, byteorder='big')
-                except:
-                    data_len = 0
-                # 如果 data_len 为 0，使用默认最小值
-                if data_len == 0:
-                    data_len = 1
-                row_end_offset = min(row_offset + header_len + data_len, self._file_size)
+        row_offset, row_end_offset, data_row_offset, _ = self._get_row_bounds(row)
 
         if row_offset >= self._file_size:
             # For empty files (file_size == 0), show empty row with placeholder
@@ -322,21 +367,19 @@ class HexTableModel(QAbstractTableModel):
                 if role == Qt.ItemDataRole.DisplayRole:
                     if col == 0:
                         # Show offset "00000000" and empty hex area
-                        return "00000000  " + "   " * (self._bytes_per_row - 1) + "  "
+                        visible_count = max(1, self.get_visible_byte_count())
+                        return "00000000  " + "   " * max(0, visible_count - 1) + "  "
                     elif col == 1:
                         # Show empty ASCII area
-                        return " " * self._bytes_per_row
+                        return " " * max(1, self.get_visible_byte_count())
                 elif role == Qt.ItemDataRole.FontRole:
                     font = QFont("Menlo", 11)
                     font.setStyleHint(QFont.StyleHint.Monospace)
                     return font
             return None
 
-        # For highlighting, calculate data position in the row
-        if self._arrangement_mode == "header_length":
-            data_row_offset = row_offset + self._header_length
-        else:
-            data_row_offset = row_offset
+        _, row_data_end, window_start, window_end = self._get_visible_data_bounds(row_offset, row_end_offset)
+        window_length = max(0, window_end - window_start)
 
         # Check for selection highlight - handle multiple selection ranges
         selection_range = None  # (start_byte_pos, end_byte_pos) in this row
@@ -360,20 +403,18 @@ class HexTableModel(QAbstractTableModel):
         
         for sel_start, sel_end in self._selection_ranges:
             # Check if this row overlaps with selection
-            if row_data_end > sel_start and row_data_start < sel_end + 1:
+            if window_end > sel_start and window_start < sel_end + 1:
                 # Calculate the byte range in this row that needs highlighting
-                # Use row_data_start (data start) for the calculation
-                sel_byte_start = sel_start - row_data_start
-                sel_byte_end = sel_end - row_data_start + 1
+                # Use the visible window start so highlighting stays aligned while scrolling.
+                sel_byte_start = sel_start - window_start
+                sel_byte_end = sel_end - window_start + 1
 
                 # Make sure we don't go negative or beyond row
                 if sel_byte_start < 0:
                     sel_byte_start = 0
 
-                # Calculate row data length
-                row_data_length = row_data_end - row_data_start
-                if sel_byte_end > row_data_length:
-                    sel_byte_end = row_data_length
+                if sel_byte_end > window_length:
+                    sel_byte_end = window_length
 
                 if sel_byte_end > sel_byte_start:
                     # Track min/max to combine all ranges
@@ -392,19 +433,17 @@ class HexTableModel(QAbstractTableModel):
             result_offset, result_length = self._search_results[self._current_result_index]
             result_end = result_offset + result_length
             # Check if this row overlaps with the current result
-            if row_offset < result_end and row_end_offset > result_offset:
+            if window_start < result_end and window_end > result_offset:
                 # Calculate the byte range in this row that needs highlighting
-                highlight_start = result_offset - data_row_offset
+                highlight_start = result_offset - window_start
                 highlight_end = highlight_start + result_length
 
                 # Make sure we don't go negative or beyond row
                 if highlight_start < 0:
                     highlight_start = 0
 
-                # Calculate row data length
-                row_data_length = row_end_offset - data_row_offset
-                if highlight_end > row_data_length:
-                    highlight_end = row_data_length
+                if highlight_end > window_length:
+                    highlight_end = window_length
 
                 if highlight_end > highlight_start:
                     highlight_range = (highlight_start, highlight_end)
@@ -571,35 +610,39 @@ class HexTableModel(QAbstractTableModel):
                 parts.append(hex_str)
                 parts.append(" ")
 
-        # Data bytes - use actual data length for this row
-        data_start = row_offset + self._header_length
-        data_end = row_end_offset
-        data_bytes_len = max(0, data_end - data_start)
+        # Data bytes - show only the visible shared window so hex and ASCII stay aligned.
+        data_start, data_end, window_start, window_end = self._get_visible_data_bounds(row_offset, row_end_offset)
+        data_bytes_len = max(0, window_end - window_start)
+        visible_count = max(1, self.get_visible_byte_count())
 
-        if data_start < self._file_size and data_bytes_len > 0:
-            data_bytes = self._data[data_start:data_end]
+        if window_start < self._file_size and data_bytes_len > 0:
+            data_bytes = self._data[window_start:window_end]
             data_bytes_len = len(data_bytes)
 
             if self._display_mode == self.MODE_HEX:
                 hex_str = ' '.join(f"{b:02X}" for b in data_bytes)
-                # Pad to bytes_per_row width (safe calculation)
-                padding_width = max(0, self._bytes_per_row * 3 - 1)
+                padding_width = max(0, visible_count * 3 - 1)
                 hex_str = hex_str.ljust(padding_width)
                 parts.append(hex_str)
             elif self._display_mode == self.MODE_BINARY:
                 # Binary: 8 bits per byte, grouped
                 bin_str = ' '.join(f"{b:08b}" for b in data_bytes)
+                padding_width = max(0, visible_count * 9 - 1)
+                bin_str = bin_str.ljust(padding_width)
                 parts.append(bin_str)
             elif self._display_mode == self.MODE_OCTAL:
                 # Octal: 3 digits per byte
                 oct_str = ' '.join(f"{b:03o}" for b in data_bytes)
-                padding_width = max(0, self._bytes_per_row * 4 - 1)
+                padding_width = max(0, visible_count * 4 - 1)
                 oct_str = oct_str.ljust(padding_width)
                 parts.append(oct_str)
             elif self._display_mode == self.MODE_ASCII:
                 # Just show spaces for ASCII mode in hex column
-                padding_width = max(0, self._bytes_per_row * 3 - 1)
+                padding_width = max(0, visible_count * 3 - 1)
                 parts.append(' ' * padding_width)
+        else:
+            padding_width = max(0, visible_count * self.get_chars_per_byte() - 1)
+            parts.append(' ' * padding_width)
 
         return ''.join(parts)
 
@@ -609,20 +652,14 @@ class HexTableModel(QAbstractTableModel):
             total_per_row = self._bytes_per_row + self._header_length
             row_end_offset = min(row_offset + total_per_row, self._file_size)
 
-        data_start = row_offset + self._header_length
-        data_end = row_end_offset
+        _, _, window_start, window_end = self._get_visible_data_bounds(row_offset, row_end_offset)
 
-        if data_start >= self._file_size:
-            return ""
+        if window_start >= self._file_size:
+            return " " * max(1, self.get_visible_byte_count())
 
-        data_bytes = self._data[data_start:data_end]
-
-        if self._display_mode == self.MODE_ASCII:
-            # Full ASCII display
-            return ''.join(chr(b) if 32 <= b < 127 else '.' for b in data_bytes)
-        else:
-            # Standard ASCII representation
-            return ''.join(chr(b) if 32 <= b < 127 else '.' for b in data_bytes)
+        data_bytes = self._data[window_start:window_end]
+        ascii_str = ''.join(chr(b) if 32 <= b < 127 else '.' for b in data_bytes)
+        return ascii_str.ljust(max(1, self.get_visible_byte_count()))
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         """Return header data."""
@@ -741,9 +778,11 @@ class HexViewDelegate(QAbstractItemDelegate):
                 text_padding = 5
 
                 if index.column() == 0:
-                    offset_chars = 10
-                    hex_byte_start = offset_chars + start_byte * 3
-                    hex_byte_end = offset_chars + end_byte * 3
+                    model = index.model()
+                    offset_chars = model.get_hex_prefix_char_count()
+                    chars_per_byte = model.get_chars_per_byte()
+                    hex_byte_start = offset_chars + start_byte * chars_per_byte
+                    hex_byte_end = offset_chars + end_byte * chars_per_byte
 
                     prefix = display_text[:hex_byte_start] if hex_byte_start <= len(display_text) else display_text
                     byte_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
@@ -783,11 +822,10 @@ class HexViewDelegate(QAbstractItemDelegate):
                     fm = painter.fontMetrics()
 
                     if index.column() == 0:
-                        # Hex format: "00000000  XX XX XX..."
-                        # Offset: 8 chars + 2 spaces = 10 chars
-                        # Each byte: 3 chars (2 hex + 1 space)
-                        offset_chars = 10
-                        hex_byte_start = offset_chars + start_byte * 3
+                        model = index.model()
+                        offset_chars = model.get_hex_prefix_char_count()
+                        chars_per_byte = model.get_chars_per_byte()
+                        hex_byte_start = offset_chars + start_byte * chars_per_byte
 
                         # Measure width up to the start position
                         if hex_byte_start <= len(display_text):
@@ -797,7 +835,7 @@ class HexViewDelegate(QAbstractItemDelegate):
                             byte_x = rect.x() + fm.horizontalAdvance(display_text)
 
                         # Measure width of the highlighted portion
-                        hex_byte_end = offset_chars + end_byte * 3
+                        hex_byte_end = offset_chars + end_byte * chars_per_byte
                         if hex_byte_end <= len(display_text):
                             full = display_text[:hex_byte_end]
                             byte_width = fm.horizontalAdvance(full) - fm.horizontalAdvance(prefix) if hex_byte_start <= len(display_text) else fm.horizontalAdvance(display_text)
@@ -910,8 +948,15 @@ class HexViewDelegate(QAbstractItemDelegate):
             if index.column() == 0 and self._cursor_column == 0:
                 # Cursor in hex column
                 display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-                offset_chars = 10  # "00000000  "
-                hex_pos = offset_chars + byte_in_row * 3
+                offset_chars = model.get_hex_prefix_char_count()
+                visible_start = model.get_horizontal_byte_offset()
+                visible_count = model.get_visible_byte_count()
+                visible_byte = byte_in_row - visible_start
+                if visible_byte < 0 or visible_byte >= visible_count:
+                    return
+
+                chars_per_byte = model.get_chars_per_byte()
+                hex_pos = offset_chars + visible_byte * chars_per_byte
 
                 if hex_pos <= len(display_text):
                     prefix = display_text[:hex_pos]
@@ -936,8 +981,11 @@ class HexViewDelegate(QAbstractItemDelegate):
             elif index.column() == 1 and self._cursor_column == 1:
                 # Cursor in ASCII column
                 display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-                if byte_in_row < len(display_text):
-                    prefix = display_text[:byte_in_row]
+                visible_start = model.get_horizontal_byte_offset()
+                visible_count = model.get_visible_byte_count()
+                visible_byte = byte_in_row - visible_start
+                if 0 <= visible_byte < min(visible_count, len(display_text)):
+                    prefix = display_text[:visible_byte]
                     cursor_x = rect.x() + text_padding + fm.horizontalAdvance(prefix)
 
                     # Draw cursor line
@@ -1009,14 +1057,18 @@ class HexViewDelegate(QAbstractItemDelegate):
                 if not display_text:
                     return
 
-                offset_chars = 10  # "00000000  "
+                offset_chars = model.get_hex_prefix_char_count()
+                chars_per_byte = model.get_chars_per_byte()
+                visible_start = data_start + model.get_horizontal_byte_offset()
+                visible_end = min(data_end, visible_start + model.get_visible_byte_count())
+                row_byte_count = max(0, visible_end - visible_start)
 
                 # For each byte in this row, check if it's modified
                 for i in range(row_byte_count):
-                    byte_offset = data_start + i
+                    byte_offset = visible_start + i
                     if byte_offset in modified_offsets:
                         # Calculate position for this byte
-                        hex_start = offset_chars + i * 3
+                        hex_start = offset_chars + i * chars_per_byte
                         hex_end = hex_start + 2  # 2 hex digits
 
                         if hex_end <= len(display_text):
@@ -1049,9 +1101,13 @@ class HexViewDelegate(QAbstractItemDelegate):
                 if not display_text:
                     return
 
+                visible_start = data_start + model.get_horizontal_byte_offset()
+                visible_end = min(data_end, visible_start + model.get_visible_byte_count())
+                row_byte_count = max(0, visible_end - visible_start)
+
                 # For each byte in this row, check if it's modified
                 for i in range(min(row_byte_count, len(display_text))):
-                    byte_offset = data_start + i
+                    byte_offset = visible_start + i
                     if byte_offset in modified_offsets:
                         char = display_text[i]
                         if char:
@@ -1102,11 +1158,16 @@ class HexView(QTableView):
     SELECTION_COLUMN = "column"      # Select entire columns
     SELECTION_CONTINUOUS = "continuous"  # Continuous selection (default)
     SELECTION_BLOCK = "block"        # Block/rectangular selection
+    MIN_HEX_VISIBLE_CHARS = 28
+    MIN_ASCII_VISIBLE_CHARS = 10
+    MIN_ASCII_RATIO = 0.22
+    MAX_ASCII_RATIO = 0.35
 
     # Signals
     cursor_moved = pyqtSignal(int)  # Current offset
     selection_changed = pyqtSignal(int, int)  # Start, end of selection
     edit_mode_changed = pyqtSignal(str)  # 'overwrite' or 'insert'
+    horizontal_window_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1155,6 +1216,7 @@ class HexView(QTableView):
         # Optimize for performance
         self.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         # Set row height
         self.verticalHeader().setDefaultSectionSize(18)
@@ -1189,6 +1251,35 @@ class HexView(QTableView):
         
         # Clear any default selection
         self.selectionModel().clearSelection()
+
+    def resizeEvent(self, event):
+        """Keep the hex and ASCII regions balanced as the view changes size."""
+        super().resizeEvent(event)
+        self._resize_columns()
+
+    def set_horizontal_byte_offset(self, value: int):
+        """Scroll the shared hex/ASCII window horizontally by byte position."""
+        self._model.set_visible_byte_window(value, self._model.get_visible_byte_count())
+        self.viewport().update()
+        self.horizontal_window_changed.emit()
+
+    def get_horizontal_window_state(self) -> tuple[int, int, bool]:
+        """Return scrollbar max, page step, and visibility for the shared byte window."""
+        visible_count = self._model.get_visible_byte_count()
+        max_offset = self._model.get_max_horizontal_byte_offset()
+        return max_offset, visible_count, max_offset > 0
+
+    def _ensure_cursor_visible(self):
+        """Shift the shared horizontal window so the active byte stays visible."""
+        bytes_per_row = max(1, self._model._bytes_per_row)
+        byte_in_row = self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset >= 0 else 0
+        visible_start = self._model.get_horizontal_byte_offset()
+        visible_count = self._model.get_visible_byte_count()
+
+        if byte_in_row < visible_start:
+            self.set_horizontal_byte_offset(byte_in_row)
+        elif byte_in_row >= visible_start + visible_count:
+            self.set_horizontal_byte_offset(byte_in_row - visible_count + 1)
 
     def set_selection_mode(self, mode: str):
         """Set selection mode."""
@@ -1314,6 +1405,7 @@ class HexView(QTableView):
         """Move cursor to specified byte offset."""
         bytes_per_row = self._model._bytes_per_row
         row = byte_offset // bytes_per_row
+        self._ensure_cursor_visible()
         
         # Block signals to prevent selection changes
         self.selectionModel().blockSignals(True)
@@ -1457,92 +1549,48 @@ class HexView(QTableView):
         
         return row_offset
 
-    def _calculate_column_byte_pos(self, x_pos: int, bytes_per_row: int) -> int:
-        """Calculate byte position within a row from x position.
-
-        Args:
-            x_pos: X position in viewport coordinates
-            bytes_per_row: Number of bytes per row
-
-        Returns:
-            Byte position (0-based index within row)
-        """
-        if bytes_per_row <= 0:
-            return 0
-
-        # Get actual cell from visualRect
-        first_row = max(0, self.rowAt(10))
-        index = self.model().index(first_row, 0)
+    def _calculate_column_byte_pos(self, index: QModelIndex, x_pos: int) -> int:
+        """Calculate byte position within a row from x position."""
         if not index.isValid():
             return 0
 
         rect = self.visualRect(index)
-
-        # Use the SAME font as delegate for accurate measurement
         font = QFont("Menlo", 11)
         font.setStyleHint(QFont.StyleHint.Monospace)
         fm = QFontMetrics(font)
-
-        # Get the actual display text to measure widths accurately
         display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        visible_start = self._model.get_horizontal_byte_offset()
+        visible_count = self._model.get_visible_byte_count()
+        text_padding = 5
 
-        # Constants matching paint method
-        text_padding = 5  # same as text_rect.adjusted(5, 0, -5, 0) in paint
-        offset_chars = 10  # "00000000  " = 10 characters
-
-        # X position relative to cell start
         x_in_cell = x_pos - rect.x()
-
-        # X position relative to text start (after left padding)
         x_in_text = x_in_cell - text_padding
-
         if x_in_text <= 0:
-            return 0
+            return visible_start
 
-        # Measure actual offset width from display text
-        if len(display_text) >= offset_chars:
-            offset_width = fm.horizontalAdvance(display_text[:offset_chars])
-        else:
-            offset_width = fm.horizontalAdvance(display_text)
+        if index.column() == 0:
+            prefix_chars = self._model.get_hex_prefix_char_count()
+            prefix_width = fm.horizontalAdvance(display_text[:prefix_chars]) if prefix_chars <= len(display_text) else fm.horizontalAdvance(display_text)
+            x_in_hex = x_in_text - prefix_width
+            if x_in_hex <= 0:
+                return visible_start
 
-        # X position relative to hex data start (after offset)
-        x_in_hex = x_in_text - offset_width
+            chars_per_byte = self._model.get_chars_per_byte()
+            for byte_pos in range(visible_count):
+                char_start = prefix_chars + byte_pos * chars_per_byte
+                char_end = min(len(display_text), char_start + chars_per_byte)
+                byte_start_x = fm.horizontalAdvance(display_text[:char_start]) - prefix_width if char_start <= len(display_text) else fm.horizontalAdvance(display_text) - prefix_width
+                byte_end_x = fm.horizontalAdvance(display_text[:char_end]) - prefix_width if char_end <= len(display_text) else fm.horizontalAdvance(display_text) - prefix_width
+                byte_mid_x = (byte_start_x + byte_end_x) / 2
+                if x_in_hex < byte_mid_x:
+                    return visible_start + byte_pos
 
-        if x_in_hex <= 0:
-            return 0
+            return visible_start + max(0, visible_count - 1)
 
-        # Calculate byte position by measuring actual text widths for each byte
-        # This exactly matches the paint method's approach
-        for byte_pos in range(bytes_per_row):
-            # Character position where this byte starts
-            char_start = offset_chars + byte_pos * 3
-            # Character position where this byte ends (inclusive)
-            # Last byte has no trailing space, so only 2 chars
-            if byte_pos == bytes_per_row - 1:
-                char_end = char_start + 2
-            else:
-                char_end = char_start + 3
-
-            # Measure actual pixel positions
-            if char_start <= len(display_text):
-                byte_start_x = fm.horizontalAdvance(display_text[:char_start]) - offset_width
-            else:
-                byte_start_x = fm.horizontalAdvance(display_text) - offset_width
-
-            if char_end <= len(display_text):
-                byte_end_x = fm.horizontalAdvance(display_text[:char_end]) - offset_width
-            else:
-                byte_end_x = fm.horizontalAdvance(display_text) - offset_width
-
-            # Check if x_in_hex falls within this byte's range
-            # Use middle of byte as the click target
-            byte_mid_x = (byte_start_x + byte_end_x) / 2
-
-            if x_in_hex < byte_mid_x:
-                return byte_pos
-
-        # If we're past all bytes, return the last one
-        return bytes_per_row - 1
+        char_width = fm.horizontalAdvance("A")
+        byte_pos = int(x_in_text // max(char_width, 1))
+        byte_pos = max(0, min(byte_pos, max(0, visible_count - 1)))
+        return visible_start + byte_pos
 
     def _on_selection_changed(self, selected, deselected):
         """Handle selection changed to update highlight based on selection mode."""
@@ -1836,7 +1884,7 @@ class HexView(QTableView):
                 self._cursor_column = index.column()
 
                 # Update cursor byte offset based on click position
-                byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
+                byte_pos = self._calculate_column_byte_pos(index, event.pos().x())
                 header_length = self._model._header_length
                 arrangement_mode = self._model._arrangement_mode
 
@@ -1851,7 +1899,7 @@ class HexView(QTableView):
                     self._block_start_row = index.row()
                     self._block_start_col = index.column()
                     # Calculate the byte position within the row from x position
-                    self._block_start_byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
+                    self._block_start_byte_pos = self._calculate_column_byte_pos(index, event.pos().x())
                     self._block_end_byte_pos = self._block_start_byte_pos
                 elif self._selection_mode == self.SELECTION_COLUMN:
                     # Column selection - store start position
@@ -1863,7 +1911,7 @@ class HexView(QTableView):
                     # Don't call super() - we handle selection ourselves
                     self.selectionModel().clearSelection()
                     self._block_start_row = index.row()
-                    self._block_start_byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
+                    self._block_start_byte_pos = self._calculate_column_byte_pos(index, event.pos().x())
                     self._continuous_current_row = index.row()
                     self._continuous_end_byte_pos = self._block_start_byte_pos
                     # Manually set selection range
@@ -1883,17 +1931,20 @@ class HexView(QTableView):
     def mouseMoveEvent(self, event):
         """Handle mouse move for block/continuous selection."""
         if event.buttons() & Qt.MouseButton.LeftButton:
-            bytes_per_row = self._model._bytes_per_row
-            current_byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
+            index = self.indexAt(event.pos())
+            if not index.isValid():
+                super().mouseMoveEvent(event)
+                return
+
+            current_byte_pos = self._calculate_column_byte_pos(index, event.pos().x())
             
             if self._selection_mode == self.SELECTION_BLOCK and self._block_start_row >= 0:
-                index = self.indexAt(event.pos())
                 if index.isValid():
                     current_row = index.row()
                     current_col = index.column()
                     
                     # Track end byte position for block selection
-                    end_byte_pos = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
+                    end_byte_pos = self._calculate_column_byte_pos(index, event.pos().x())
                     self._block_end_byte_pos = end_byte_pos
 
                     # Calculate block selection
@@ -1912,15 +1963,14 @@ class HexView(QTableView):
                     self.selectionModel().select(selection, self.selectionCommand(top_left, None))
             elif self._selection_mode == self.SELECTION_COLUMN:
                 # Column selection - update only when column actually changes
-                new_byte = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
+                new_byte = self._calculate_column_byte_pos(index, event.pos().x())
                 if new_byte != getattr(self, '_column_end_byte_pos', -1):
                     self._do_column_selection(event.pos(), event.pos())
             elif self._selection_mode == self.SELECTION_CONTINUOUS and self._block_start_byte_pos >= 0:
                 # Update continuous selection as user drags - only when position changes
-                index = self.indexAt(event.pos())
                 if index.isValid():
                     new_row = index.row()
-                    new_byte = self._calculate_column_byte_pos(event.pos().x(), bytes_per_row)
+                    new_byte = self._calculate_column_byte_pos(index, event.pos().x())
                     
                     # Only update if position changed
                     if (new_row != getattr(self, '_continuous_current_row', -1) or 
@@ -2008,9 +2058,15 @@ class HexView(QTableView):
         file_size = self._model._file_size
         header_length = self._model._header_length
         arrangement_mode = self._model._arrangement_mode
+        index = self.indexAt(pos)
+        if not index.isValid():
+            first_row = max(0, self.rowAt(10))
+            index = self.model().index(first_row, max(0, min(1, getattr(self, '_cursor_column', 0))))
+        if not index.isValid():
+            return
 
         # Calculate byte position from x position
-        byte_pos = self._calculate_column_byte_pos(pos.x(), bytes_per_row)
+        byte_pos = self._calculate_column_byte_pos(index, pos.x())
         
         # Early return if position hasn't changed
         if (byte_pos == getattr(self, '_column_byte_pos', -1) and 
@@ -2019,7 +2075,7 @@ class HexView(QTableView):
         
         # Get start position from stored value
         start_x = getattr(self, '_column_press_x', pos.x())
-        start_byte_pos = self._calculate_column_byte_pos(start_x, bytes_per_row)
+        start_byte_pos = self._calculate_column_byte_pos(index, start_x)
         
         # Calculate range from start to current
         start_byte = min(start_byte_pos, byte_pos)
@@ -2214,11 +2270,54 @@ class HexView(QTableView):
         col0_width = int(offset_width + col0_text_width + cell_padding)
         col1_width = int(char_width * max(4, bytes_per_row) + cell_padding)
 
-        # Keep both columns content-sized so a narrow window scrolls horizontally
-        # instead of compressing the ASCII column and clipping characters.
         self.horizontalHeader().setStretchLastSection(False)
-        self.setColumnWidth(0, max(col0_width, 80))
-        self.setColumnWidth(1, max(col1_width, 60))
+        available_width = max(0, self.viewport().width())
+
+        if available_width <= 0:
+            available_width = max(col0_width + col1_width, 1)
+
+        if self.isColumnHidden(1):
+            hex_width = max(available_width, 80)
+            ascii_width = 0
+            visible_hex_bytes = max(
+                1,
+                int(
+                    max(0, hex_width - offset_width - char_width * (header_chars + separator_chars) - cell_padding + char_width)
+                    // max(char_width * data_chars_per_byte, 1)
+                ),
+            )
+            visible_byte_count = min(max(1, bytes_per_row), visible_hex_bytes)
+        else:
+            ascii_ratio = 1.0 / (data_chars_per_byte + 1)
+            ascii_ratio = min(self.MAX_ASCII_RATIO, max(self.MIN_ASCII_RATIO, ascii_ratio))
+
+            min_hex_width = int(offset_width + char_width * (header_chars + separator_chars) + char_width * self.MIN_HEX_VISIBLE_CHARS + cell_padding)
+            min_ascii_width = int(char_width * self.MIN_ASCII_VISIBLE_CHARS + cell_padding)
+
+            if available_width <= min_hex_width + min_ascii_width:
+                ascii_width = max(min_ascii_width, int(available_width * ascii_ratio))
+                ascii_width = min(ascii_width, max(min_ascii_width, available_width // 2))
+                hex_width = max(80, available_width - ascii_width)
+            else:
+                ascii_width = int(available_width * ascii_ratio)
+                ascii_width = max(min_ascii_width, ascii_width)
+                ascii_width = min(ascii_width, available_width - min_hex_width)
+                hex_width = max(min_hex_width, available_width - ascii_width)
+
+            visible_hex_bytes = max(
+                1,
+                int(
+                    max(0, hex_width - offset_width - char_width * (header_chars + separator_chars) - cell_padding + char_width)
+                    // max(char_width * data_chars_per_byte, 1)
+                ),
+            )
+            visible_ascii_bytes = max(1, int(max(0, ascii_width - cell_padding) // max(char_width, 1)))
+            visible_byte_count = min(max(1, bytes_per_row), visible_hex_bytes, visible_ascii_bytes)
+
+        self.setColumnWidth(0, max(int(hex_width), 80))
+        self.setColumnWidth(1, max(int(ascii_width), 0))
+        self._model.set_visible_byte_window(self._model.get_horizontal_byte_offset(), visible_byte_count)
+        self.horizontal_window_changed.emit()
 
     def get_offset_at_cursor(self) -> int:
         """Get file offset at current cursor position."""
@@ -2505,34 +2604,37 @@ class HexViewWidget(QWidget):
         self._ruler.setVisible(False)
         layout.addWidget(self._ruler)
 
-        # Create scroll area
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
-            QScrollArea {
-                background-color: #1e1e1e;
-                border: none;
-            }
-        """)
-
         # Create hex view
         self._hex_view = HexView()
-        scroll.setWidget(self._hex_view)
+        layout.addWidget(self._hex_view)
 
-        layout.addWidget(scroll)
+        self._horizontal_scrollbar = QScrollBar(Qt.Orientation.Horizontal)
+        self._horizontal_scrollbar.setVisible(False)
+        layout.addWidget(self._horizontal_scrollbar)
         self.setLayout(layout)
 
         # Connect scroll signals
-        self._hex_view.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        self._horizontal_scrollbar.valueChanged.connect(self._on_scroll_changed)
+        self._hex_view.horizontal_window_changed.connect(self._sync_horizontal_scrollbar)
+        self._sync_horizontal_scrollbar()
 
     def _on_scroll_changed(self, value):
         """Handle horizontal scroll change."""
         self._ruler.set_scroll_offset(value)
+        self._hex_view.set_horizontal_byte_offset(value)
         # Also update column width in case it changed
         self._ruler.set_column_width(self._hex_view.columnWidth(0))
-        # Force repaint to update highlights correctly during horizontal scroll
-        self._hex_view.viewport().update()
+
+    def _sync_horizontal_scrollbar(self):
+        """Sync the shared scrollbar with the current visible byte window."""
+        max_offset, page_step, visible = self._hex_view.get_horizontal_window_state()
+        self._horizontal_scrollbar.blockSignals(True)
+        self._horizontal_scrollbar.setRange(0, max_offset)
+        self._horizontal_scrollbar.setPageStep(page_step)
+        self._horizontal_scrollbar.setSingleStep(1)
+        self._horizontal_scrollbar.setValue(self._hex_view._model.get_horizontal_byte_offset())
+        self._horizontal_scrollbar.blockSignals(False)
+        self._horizontal_scrollbar.setVisible(visible)
 
     def set_file_handle(self, file_handle):
         """Set file handle to display."""
@@ -2544,6 +2646,7 @@ class HexViewWidget(QWidget):
                 self._ruler.set_bytes_per_row(self._hex_view._model._bytes_per_row)
                 self._ruler.set_header_length(self._hex_view._model._header_length)
                 self._ruler.set_column_width(self._hex_view.columnWidth(0))
+                self._sync_horizontal_scrollbar()
         except Exception as e:
             pass
 
