@@ -924,6 +924,7 @@ class HexViewDelegate(QAbstractItemDelegate):
                     painter.setPen(QPen(self.CURSOR_COLOR, 2))
                     painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
         except Exception as e:
+            pass
 
     def _draw_modified_bytes(self, painter, option, index, rect):
         """Draw modified bytes in red color.
@@ -1330,6 +1331,7 @@ class HexView(QTableView):
                     column
                 )
         except Exception as e:
+            pass
 
     def _handle_ascii_input(self, char: str):
         """Handle ASCII character input in ASCII column."""
@@ -2100,6 +2102,7 @@ class HexView(QTableView):
             self._update_delegate_cursor()
             self.viewport().update()
         except Exception as e:
+            pass
 
     def _reload_data(self):
         """Reload data from file handle."""
@@ -2495,6 +2498,7 @@ class HexViewWidget(QWidget):
                 self._ruler.set_header_length(self._hex_view._model._header_length)
                 self._ruler.set_column_width(self._hex_view.columnWidth(0))
         except Exception as e:
+            pass
 
     @property
     def hex_view(self):
