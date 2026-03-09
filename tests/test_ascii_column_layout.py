@@ -9,6 +9,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtTest import QTest
+from PyQt6.QtCore import QPoint, Qt
 
 from src.app import HexForgeApp
 from src.ui.views.hex_view import HexViewWidget
@@ -72,5 +73,51 @@ def test_horizontal_scrollbar_moves_shared_byte_window():
         assert widget.hex_view._model.get_horizontal_byte_offset() == scrollbar.value()
         assert moved_hex != initial_hex
         assert moved_ascii != initial_ascii
+    finally:
+        widget.close()
+
+
+def test_touchpad_horizontal_scroll_moves_shared_byte_window():
+    """Horizontal wheel gestures should move the shared byte window even without dragging the scrollbar."""
+    HexForgeApp.instance()
+
+    class FakeWheelEvent:
+        def __init__(self, x_delta: int):
+            self._pixel_delta = QPoint(x_delta, 0)
+            self._angle_delta = QPoint(0, 0)
+            self._accepted = False
+
+        def type(self):
+            return 31  # QEvent.Type.Wheel
+
+        def pixelDelta(self):
+            return self._pixel_delta
+
+        def angleDelta(self):
+            return self._angle_delta
+
+        def modifiers(self):
+            return Qt.KeyboardModifier.NoModifier
+
+        def accept(self):
+            self._accepted = True
+
+    widget = HexViewWidget()
+    widget.resize(640, 320)
+    widget.hex_view.set_bytes_per_row(256)
+    payload = bytes(65 + (i % 26) for i in range(512))
+    widget.hex_view._model.set_data(payload)
+    widget.show()
+    QTest.qWait(50)
+
+    try:
+        widget.hex_view.set_ascii_visible(True)
+        QTest.qWait(10)
+
+        event = FakeWheelEvent(-120)
+        moved = widget.hex_view._handle_horizontal_wheel_event(event)
+
+        assert moved
+        assert widget.hex_view._model.get_horizontal_byte_offset() > 0
     finally:
         widget.close()

@@ -1257,6 +1257,12 @@ class HexView(QTableView):
         super().resizeEvent(event)
         self._resize_columns()
 
+    def viewportEvent(self, event):
+        """Handle touchpad horizontal scrolling on the viewport."""
+        if event.type() == QEvent.Type.Wheel and self._handle_horizontal_wheel_event(event):
+            return True
+        return super().viewportEvent(event)
+
     def set_horizontal_byte_offset(self, value: int):
         """Scroll the shared hex/ASCII window horizontally by byte position."""
         self._model.set_visible_byte_window(value, self._model.get_visible_byte_count())
@@ -1280,6 +1286,47 @@ class HexView(QTableView):
             self.set_horizontal_byte_offset(byte_in_row)
         elif byte_in_row >= visible_start + visible_count:
             self.set_horizontal_byte_offset(byte_in_row - visible_count + 1)
+
+    def _handle_horizontal_wheel_event(self, event) -> bool:
+        """Map touchpad horizontal scrolling to the shared byte window."""
+        max_offset = self._model.get_max_horizontal_byte_offset()
+        if max_offset <= 0:
+            return False
+
+        pixel_delta = event.pixelDelta()
+        angle_delta = event.angleDelta()
+        horizontal_delta = 0
+        pixel_based = False
+
+        if not pixel_delta.isNull() and pixel_delta.x() and abs(pixel_delta.x()) >= abs(pixel_delta.y()):
+            horizontal_delta = pixel_delta.x()
+            pixel_based = True
+        elif event.modifiers() & Qt.KeyboardModifier.ShiftModifier and angle_delta.y():
+            horizontal_delta = angle_delta.y()
+        elif angle_delta.x() and abs(angle_delta.x()) >= abs(angle_delta.y()):
+            horizontal_delta = angle_delta.x()
+
+        if not horizontal_delta:
+            return False
+
+        if pixel_based:
+            font = QFont("Menlo", 11)
+            font.setStyleHint(QFont.StyleHint.Monospace)
+            char_width = max(1, QFontMetrics(font).horizontalAdvance("0"))
+            byte_step = max(1, int(round(abs(horizontal_delta) / char_width)))
+        else:
+            byte_step = max(1, int(round(abs(horizontal_delta) / 120)))
+
+        current_offset = self._model.get_horizontal_byte_offset()
+        new_offset = current_offset - byte_step if horizontal_delta > 0 else current_offset + byte_step
+        new_offset = max(0, min(new_offset, max_offset))
+
+        if new_offset == current_offset:
+            return True
+
+        self.set_horizontal_byte_offset(new_offset)
+        event.accept()
+        return True
 
     def set_selection_mode(self, mode: str):
         """Set selection mode."""
