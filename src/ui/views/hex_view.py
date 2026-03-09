@@ -647,7 +647,6 @@ class HexViewDelegate(QAbstractItemDelegate):
         self._nibble_pos = nibble_pos
         self._cursor_column = column
         # Debug output
-        print(f"[Delegate] Cursor set: byte={byte_offset}, nibble={nibble_pos}, col={column}")
 
     def set_cursor_visible(self, visible: bool):
         """Set cursor visibility (for blinking)."""
@@ -829,12 +828,10 @@ class HexViewDelegate(QAbstractItemDelegate):
         """Draw editing cursor at current position."""
         try:
             # Debug: Check initial state
-            print(f"[DrawCursor] START: cursor_byte={self._cursor_byte_offset}, col={index.column()}, cursor_col={self._cursor_column}, visible={self._cursor_visible}")
 
             # Only draw if this row contains the cursor
             model = index.model()
             if model is None:
-                print(f"[DrawCursor] No model, returning")
                 return
 
             bytes_per_row = getattr(model, '_bytes_per_row', 16)
@@ -869,7 +866,6 @@ class HexViewDelegate(QAbstractItemDelegate):
             cursor_byte = self._cursor_byte_offset
 
             # Debug output
-            print(f"[DrawCursor] row={row}, cursor_byte={cursor_byte}, data_start={data_start}, data_end={data_end}")
 
             # Safety check for empty files
             if file_size == 0:
@@ -880,7 +876,6 @@ class HexViewDelegate(QAbstractItemDelegate):
                     return
 
             if cursor_byte < data_start or cursor_byte > data_end:
-                print(f"[DrawCursor] Cursor not in this row, returning")
                 return
 
             # Calculate byte position within the row
@@ -889,7 +884,6 @@ class HexViewDelegate(QAbstractItemDelegate):
             fm = painter.fontMetrics()
             text_padding = 5
 
-            print(f"[DrawCursor] Checking columns: index.col={index.column()}, cursor_col={self._cursor_column}")
 
             if index.column() == 0 and self._cursor_column == 0:
                 # Cursor in hex column
@@ -913,7 +907,6 @@ class HexViewDelegate(QAbstractItemDelegate):
                     cursor_y = rect.y() + 2
 
                     # Debug: print cursor position
-                    print(f"[DrawCursor] Drawing at x={cursor_x}, y={cursor_y}, row={row}, byte_in_row={byte_in_row}")
 
                     painter.setPen(QPen(self.CURSOR_COLOR, 2))
                     painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
@@ -928,11 +921,9 @@ class HexViewDelegate(QAbstractItemDelegate):
                     # Draw cursor line
                     cursor_height = rect.height() - 4
                     cursor_y = rect.y() + 2
-                    print(f"[DrawCursor] ASCII cursor at x={cursor_x}, y={cursor_y}")
                     painter.setPen(QPen(self.CURSOR_COLOR, 2))
                     painter.drawLine(int(cursor_x), int(cursor_y), int(cursor_x), int(cursor_y + cursor_height))
         except Exception as e:
-            print(f"[DrawCursor] Error: {e}")
 
     def _draw_modified_bytes(self, painter, option, index, rect):
         """Draw modified bytes in red color.
@@ -1220,7 +1211,6 @@ class HexView(QTableView):
         """Handle hex character input in hex column."""
         # Validate input
         if char.upper() not in '0123456789ABCDEF':
-            print(f"[HexInput] Invalid char: {char}")
             return
 
         char = char.upper()
@@ -1228,26 +1218,21 @@ class HexView(QTableView):
         nibble = self._nibble_pos
 
         # Debug output
-        print(f"[HexInput] START: char={char}, byte_offset={byte_offset}, nibble={nibble}")
 
         # Check if we have file handle
         if not self._file_handle:
-            print(f"[HexInput] No file handle!")
             return
 
         # Handle empty file - create first byte
         if self._model._file_size == 0:
-            print(f"[HexInput] Creating first byte for empty file")
             self._file_handle.insert(0, bytes([0]))
             self._model.set_data(self._file_handle.read(0, self._file_handle.file_size))
             self._cursor_byte_offset = 0
             byte_offset = 0
 
         # Check if we need to extend file - always extend to allow continuous input
-        print(f"[HexInput] Checking: byte_offset={byte_offset}, file_size={self._model._file_size}")
         if byte_offset >= self._model._file_size:
             # Extend file with zero bytes up to the cursor position
-            print(f"[HexInput] Extending file at offset {byte_offset}")
             # Add enough zero bytes to reach the cursor position
             bytes_to_add = (byte_offset - self._model._file_size) + 1
             for i in range(bytes_to_add):
@@ -1256,18 +1241,15 @@ class HexView(QTableView):
 
         # Read current byte
         current_byte = self._model._data[byte_offset]
-        print(f"[HexInput] Current byte at {byte_offset}: 0x{current_byte:02X}")
 
         # Calculate new byte value
         nibble_value = int(char, 16)
         if nibble == 0:
             # High nibble
             new_byte = (nibble_value << 4) | (current_byte & 0x0F)
-            print(f"[HexInput] HIGH nibble: current=0x{current_byte:02X}, new=0x{new_byte:02X}")
         else:
             # Low nibble
             new_byte = (current_byte & 0xF0) | nibble_value
-            print(f"[HexInput] LOW nibble: current=0x{current_byte:02X}, new=0x{new_byte:02X}")
 
         # Write the byte
         self._file_handle.write(byte_offset, bytes([new_byte]))
@@ -1279,20 +1261,17 @@ class HexView(QTableView):
         if nibble == 0:
             # Move to low nibble
             self._nibble_pos = 1
-            print(f"[HexInput] Moving to LOW nibble, _nibble_pos={self._nibble_pos}")
             # Update delegate cursor for nibble movement
             self._update_delegate_cursor()
         else:
             # Move to next byte's high nibble
             self._nibble_pos = 0
             self._cursor_byte_offset = byte_offset + 1
-            print(f"[HexInput] Moving to next byte, _cursor_byte_offset={self._cursor_byte_offset}, _nibble_pos={self._nibble_pos}")
             # Move selection to next row if needed
             self._move_cursor_to_byte(self._cursor_byte_offset)
 
         # Refresh display
         self.viewport().update()
-        print(f"[HexInput] DONE: _cursor_byte_offset={self._cursor_byte_offset}, _nibble_pos={self._nibble_pos}")
 
         # Refresh display
         self.viewport().update()
@@ -1306,7 +1285,6 @@ class HexView(QTableView):
         self.setFocus()
         self.activateWindow()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        print(f"[HexInput] Focus set, hasFocus={self.hasFocus()}")
 
     def _move_cursor_to_byte(self, byte_offset: int):
         """Move cursor to specified byte offset."""
@@ -1343,7 +1321,6 @@ class HexView(QTableView):
             nibble_pos = getattr(self, '_nibble_pos', 0)
 
             # Debug output
-            print(f"[HexView] Updating delegate cursor: byte={byte_offset}, nibble={nibble_pos}, col={column}")
 
             # Update delegate cursor position
             if hasattr(self, '_delegate') and self._delegate is not None:
@@ -1353,7 +1330,6 @@ class HexView(QTableView):
                     column
                 )
         except Exception as e:
-            print(f"Error updating delegate cursor: {e}")
 
     def _handle_ascii_input(self, char: str):
         """Handle ASCII character input in ASCII column."""
@@ -2124,7 +2100,6 @@ class HexView(QTableView):
             self._update_delegate_cursor()
             self.viewport().update()
         except Exception as e:
-            print(f"Error initializing cursor: {e}")
 
     def _reload_data(self):
         """Reload data from file handle."""
@@ -2223,7 +2198,6 @@ class HexView(QTableView):
         """Handle key press."""
         from PyQt6.QtCore import Qt
         idx = self.currentIndex()
-        print(f"[keyPressEvent] key={event.key()}, text={event.text()}, hasFocus={self.hasFocus()}, indexValid={idx.isValid()}, rowCount={self._model.rowCount()}")
 
         # Handle Insert key for mode toggle
         if event.key() == Qt.Key.Key_Insert:
@@ -2252,7 +2226,6 @@ class HexView(QTableView):
             # Use internal cursor state instead of currentIndex (which may be invalid)
             cursor_col = getattr(self, '_cursor_column', 0)
             cursor_byte = getattr(self, '_cursor_byte_offset', 0)
-            print(f"[keyPressEvent] cursor_col={cursor_col}, cursor_byte={cursor_byte}")
 
             # Process input based on tracked cursor state
             if cursor_col == 0:
@@ -2427,7 +2400,6 @@ class HexView(QTableView):
             return True
 
         except Exception as e:
-            print(f"Paste error: {e}")
             return False
 
     def cut_selection(self) -> bool:
@@ -2459,7 +2431,6 @@ class HexView(QTableView):
                 self._model.clear_selection_highlight()
                 return True
             except Exception as e:
-                print(f"Cut error: {e}")
                 return False
 
         return False
@@ -2524,7 +2495,6 @@ class HexViewWidget(QWidget):
                 self._ruler.set_header_length(self._hex_view._model._header_length)
                 self._ruler.set_column_width(self._hex_view.columnWidth(0))
         except Exception as e:
-            print(f"Error updating ruler settings: {e}")
 
     @property
     def hex_view(self):
