@@ -30,7 +30,8 @@ class OffsetRulerWidget(QWidget):
         self._header_length = 0
         self._scroll_offset = 0
         self._column0_width = 300  # Default, will be updated
-        self.setFixedHeight(20)
+        self._tick_interval = 10
+        self.setFixedHeight(26)
         self.setStyleSheet("background-color: #2d2d2d;")
 
     def set_bytes_per_row(self, bytes_per_row: int):
@@ -49,64 +50,86 @@ class OffsetRulerWidget(QWidget):
         self.update()
 
     def set_scroll_offset(self, offset: int):
-        """Set horizontal scroll offset."""
+        """Set shared horizontal byte offset."""
         self._scroll_offset = offset
         self.update()
+
+    def _get_visible_major_ticks(self) -> list[tuple[int, float]]:
+        """Return visible major tick labels and x positions."""
+        return [(byte_offset, x_pos) for byte_offset, x_pos in self._get_visible_byte_ticks() if byte_offset % self._tick_interval == 0]
+
+    def _get_visible_byte_ticks(self) -> list[tuple[int, float]]:
+        """Return visible byte tick positions aligned to the left edge of each data cell."""
+        parent = self.parent()
+        if not parent or not hasattr(parent, '_hex_view'):
+            return []
+
+        hex_view = parent._hex_view
+        model = getattr(hex_view, '_model', None)
+        if model is None:
+            return []
+
+        visible_count = model.get_visible_byte_count()
+        if visible_count <= 0:
+            return []
+
+        data_font = QFont("Menlo", 11)
+        data_font.setStyleHint(QFont.StyleHint.Monospace)
+        data_fm = QFontMetrics(data_font)
+
+        chars_per_byte = max(1, model.get_chars_per_byte())
+        prefix_chars = model.get_hex_prefix_char_count()
+        text_padding = 5
+        display_text = ""
+        if model.rowCount() > 0:
+            display_text = model.data(model.index(0, 0)) or ""
+
+        if not display_text:
+            display_text = "0" * prefix_chars + ("00 " * max(0, visible_count - 1)) + "00"
+
+        ticks = []
+        visible_start = model.get_horizontal_byte_offset()
+        for local_byte in range(visible_count):
+            byte_offset = visible_start + local_byte
+            char_start = prefix_chars + local_byte * chars_per_byte
+            if char_start <= len(display_text):
+                x_pos = text_padding + data_fm.horizontalAdvance(display_text[:char_start])
+            else:
+                x_pos = text_padding + data_fm.horizontalAdvance(display_text)
+            ticks.append((byte_offset, x_pos))
+
+        return ticks
 
     def paintEvent(self, event):
         """Paint the ruler."""
         painter = QPainter(self)
         painter.setFont(self._font)
 
-        # Colors
         bg_color = QColor("#2d2d2d")
         text_color = QColor("#888888")
         tick_color = QColor("#555555")
+        baseline_color = QColor("#3c3c3c")
 
         painter.fillRect(self.rect(), bg_color)
 
         fm = painter.fontMetrics()
+        bottom = self.height() - 1
+        painter.setPen(baseline_color)
+        painter.drawLine(0, bottom, self.width(), bottom)
 
-        bytes_per_row = max(1, self._bytes_per_row)
-
-        # Get actual column positions from hex view
-        parent = self.parent()
-        if parent and hasattr(parent, '_hex_view'):
-            hex_view = parent._hex_view
-            # Calculate: byte_width = column_width / bytes_per_row
-            # Then adjust to match actual data spacing
-            # Reduce to match data interval
-            byte_width = hex_view.columnWidth(0) / bytes_per_row * 0.70
-            # Offset to first data byte
-            offset_width = byte_width * 0.8
-        else:
-            # Fallback calculation
-            total_chars = 10 + bytes_per_row * 3
-            byte_width = (self._column0_width / total_chars) * 3
-            offset_width = (8 / total_chars) * self._column0_width
-
-        # Debug info removed
-
-        # Draw only major ticks every 10 bytes
-        tick_interval = 10
-
-        # For now, draw ticks at fixed positions based on percentage
-        # Just show labels at positions 0, 10, 20, 30...
-        for i in range(0, bytes_per_row + 1, tick_interval):
-            # Position as percentage of data area
-            pos_ratio = i / bytes_per_row if bytes_per_row > 0 else 0
-            x_pos = pos_ratio * hex_view.columnWidth(0) - self._scroll_offset
-
-            if -50 < x_pos < self.width() + 50:
-                # Draw tick mark
+        for byte_offset, x_pos in self._get_visible_byte_ticks():
+            if -40 < x_pos < self.width() + 40:
                 painter.setPen(tick_color)
-                painter.drawLine(int(x_pos), 15, int(x_pos), 20)
+                tick_top = bottom - 8 if byte_offset % self._tick_interval == 0 else bottom - 5
+                painter.drawLine(int(x_pos), tick_top, int(x_pos), bottom)
 
-                # Draw label
+        for label_value, x_pos in self._get_visible_major_ticks():
+            if -40 < x_pos < self.width() + 40:
                 painter.setPen(text_color)
-                label = f"{i}"
+                label = f"{label_value}"
                 label_width = fm.horizontalAdvance(label)
-                painter.drawText(int(x_pos - label_width / 2), 10, label)
+                text_x = max(0, min(int(x_pos - label_width / 2), self.width() - label_width))
+                painter.drawText(text_x, 11, label)
 
 
 class HexTableModel(QAbstractTableModel):
@@ -2648,7 +2671,7 @@ class HexViewWidget(QWidget):
 
         # Create offset ruler (hidden for now)
         self._ruler = OffsetRulerWidget()
-        self._ruler.setVisible(False)
+        self._ruler.setVisible(True)
         layout.addWidget(self._ruler)
 
         # Create hex view
@@ -2667,10 +2690,8 @@ class HexViewWidget(QWidget):
 
     def _on_scroll_changed(self, value):
         """Handle horizontal scroll change."""
-        self._ruler.set_scroll_offset(value)
         self._hex_view.set_horizontal_byte_offset(value)
-        # Also update column width in case it changed
-        self._ruler.set_column_width(self._hex_view.columnWidth(0))
+        self._update_ruler()
 
     def _sync_horizontal_scrollbar(self):
         """Sync the shared scrollbar with the current visible byte window."""
@@ -2682,6 +2703,14 @@ class HexViewWidget(QWidget):
         self._horizontal_scrollbar.setValue(self._hex_view._model.get_horizontal_byte_offset())
         self._horizontal_scrollbar.blockSignals(False)
         self._horizontal_scrollbar.setVisible(visible)
+        self._update_ruler()
+
+    def _update_ruler(self):
+        """Refresh ruler metrics from the current hex view state."""
+        self._ruler.set_bytes_per_row(self._hex_view._model._bytes_per_row)
+        self._ruler.set_header_length(self._hex_view._model._header_length)
+        self._ruler.set_column_width(self._hex_view.columnWidth(0))
+        self._ruler.set_scroll_offset(self._hex_view._model.get_horizontal_byte_offset())
 
     def set_file_handle(self, file_handle):
         """Set file handle to display."""
@@ -2690,9 +2719,7 @@ class HexViewWidget(QWidget):
         # Update ruler settings with safety checks
         try:
             if hasattr(self._hex_view, '_model') and self._hex_view._model is not None:
-                self._ruler.set_bytes_per_row(self._hex_view._model._bytes_per_row)
-                self._ruler.set_header_length(self._hex_view._model._header_length)
-                self._ruler.set_column_width(self._hex_view.columnWidth(0))
+                self._update_ruler()
                 self._sync_horizontal_scrollbar()
         except Exception as e:
             pass
