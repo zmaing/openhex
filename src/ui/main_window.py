@@ -22,6 +22,7 @@ from ..core.data_model import DataModel, DisplayMode, ArrangementMode
 from ..core.search_engine import SearchEngine, SearchMode, SearchResult
 from ..utils.logger import logger
 from ..utils.format import FormatUtils
+from ..utils.i18n import tr
 from ..ai import AIManager
 
 
@@ -306,10 +307,6 @@ class HexEditorMainWindow(QWidget):
             }
         """)
 
-        # File Info tab
-        self._file_info = self._create_file_info_panel()
-        self._panel_tabs.addTab(self._file_info, "Info")
-
         # Data Value tab
         self._data_value = self._create_data_value_panel()
         self._panel_tabs.addTab(self._data_value, "Value")
@@ -365,61 +362,6 @@ class HexEditorMainWindow(QWidget):
             return panel.isVisible()
 
         return panel.isVisible() and sizes[index] > 0
-
-    def _create_file_info_panel(self):
-        """Create file information panel."""
-        panel = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        # Title
-        title = QLabel("File Information")
-        title.setStyleSheet("font-weight: bold; color: #cccccc;")
-        layout.addWidget(title)
-
-        # File name
-        self._info_name = QLabel("-")
-        self._info_name.setWordWrap(True)
-        layout.addWidget(QLabel("Name:"))
-        layout.addWidget(self._info_name)
-
-        # File size
-        self._info_size = QLabel("0 B")
-        layout.addWidget(QLabel("Size:"))
-        layout.addWidget(self._info_size)
-
-        # File type
-        self._info_type = QLabel("-")
-        layout.addWidget(QLabel("Type:"))
-        layout.addWidget(self._info_type)
-
-        # Path
-        self._info_path = QLabel("-")
-        self._info_path.setWordWrap(True)
-        layout.addWidget(QLabel("Path:"))
-        layout.addWidget(self._info_path)
-
-        # Checksums section
-        checksum_label = QLabel("Checksums")
-        checksum_label.setStyleSheet("font-weight: bold; margin-top: 8px; color: #cccccc;")
-        layout.addWidget(checksum_label)
-
-        self._info_md5 = QLabel("-")
-        self._info_md5.setFont(QFont("Monospace", 9))
-        self._info_md5.setWordWrap(True)
-        layout.addWidget(QLabel("MD5:"))
-        layout.addWidget(self._info_md5)
-
-        self._info_sha256 = QLabel("-")
-        self._info_sha256.setFont(QFont("Monospace", 9))
-        self._info_sha256.setWordWrap(True)
-        layout.addWidget(QLabel("SHA256:"))
-        layout.addWidget(self._info_sha256)
-
-        layout.addStretch()
-        panel.setLayout(layout)
-        return panel
 
     def _create_data_value_panel(self):
         """Create data value inspection panel."""
@@ -609,7 +551,6 @@ class HexEditorMainWindow(QWidget):
             # Also update data model
             self._data_model.bytes_per_frame = bytes_per_row
 
-            self._update_file_info(doc)
             self.file_opened.emit(path)
 
     def _on_file_open_request(self, path: str):
@@ -642,9 +583,7 @@ class HexEditorMainWindow(QWidget):
             return
 
         if self._document_model.save_current_document():
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            self._status_bar.showMessage(f"Saved: {doc.file_name} at {timestamp}", 3000)
+            self._show_save_success_message()
             if doc and doc.file_path:
                 self.file_saved.emit(doc.file_path)
         else:
@@ -664,6 +603,11 @@ class HexEditorMainWindow(QWidget):
                 doc = self._document_model.current_document
                 if doc:
                     self._update_tab_name(self._tab_widget.currentIndex(), doc)
+                self._show_save_success_message()
+
+    def _show_save_success_message(self):
+        """Show a short save success message that does not stretch the status bar."""
+        self._status_bar.showMessage(tr("status_saved"), 3000)
 
     def close_current_file(self):
         """Close current file."""
@@ -1470,7 +1414,6 @@ class HexEditorMainWindow(QWidget):
         """Add editor tab for document."""
         # Create hex view widget
         hex_view_widget = HexEditorTabWidget(doc, self)
-        hex_view_widget.data_changed.connect(self._on_hex_view_data_changed)
         index = self._tab_widget.addTab(hex_view_widget, doc.file_name)
         self._tab_widget.setCurrentIndex(index)
         self._update_tab_name(index, doc)
@@ -1537,15 +1480,6 @@ class HexEditorMainWindow(QWidget):
             doc = self._document_model.get_document(index)
             if doc:
                 self._document_model.set_current_document(doc)
-                self._update_file_info(doc)
-
-    def _on_hex_view_data_changed(self):
-        """Handle hex view data changed."""
-        widget = self.sender()
-        if widget:
-            doc = widget.document
-            if doc:
-                self._update_file_info(doc)
 
     def _on_document_changed(self, doc: FileHandle):
         """Handle document change."""
@@ -1561,36 +1495,6 @@ class HexEditorMainWindow(QWidget):
                 if widget.document == doc:
                     self._update_tab_name(i, doc)
                     break
-
-    def _update_file_info(self, doc: FileHandle):
-        """Update file information panel."""
-        if not doc:
-            self._info_name.setText("-")
-            self._info_size.setText("0 B")
-            self._info_type.setText("-")
-            self._info_path.setText("-")
-            self._info_md5.setText("-")
-            self._info_sha256.setText("-")
-            return
-
-        self._info_name.setText(doc.file_name)
-        self._info_size.setText(FormatUtils.format_size(doc.file_size))
-
-        # File type
-        file_type = doc.file_type.name if hasattr(doc, 'file_type') else 'UNKNOWN'
-        self._info_type.setText(file_type)
-
-        # Path
-        self._info_path.setText(doc.file_path or "Untitled")
-
-        # Checksums (only if file is small enough)
-        if doc.file_size < 100 * 1024 * 1024:  # 100MB
-            self._info_md5.setText("Click to calculate...")
-            self._info_sha256.setText("Click to calculate...")
-            # TODO: Calculate in background
-        else:
-            self._info_md5.setText("(too large)")
-            self._info_sha256.setText("(too large)")
 
 
 class HexEditorTabWidget(QWidget):

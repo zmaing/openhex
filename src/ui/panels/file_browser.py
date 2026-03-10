@@ -4,22 +4,40 @@ File Browser Panel
 VSCode-like file tree for browsing files and folders.
 """
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                             QTreeView, QLineEdit, QPushButton, QFrame)
-from PyQt6.QtCore import Qt, QDir, QModelIndex, pyqtSignal, QAbstractItemModel, QItemSelectionModel
-from PyQt6.QtGui import QIcon, QPixmap, QStandardItemModel, QStandardItem, QFileSystemModel
-
+from datetime import datetime
+import html
 import os
+
+from PyQt6.QtCore import QEvent, QModelIndex, QRect, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap, QStandardItem, QStandardItemModel
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QStyle,
+    QStyleOptionViewItem,
+    QStyledItemDelegate,
+    QToolTip,
+    QTreeView,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ...utils.format import FormatUtils
+from ...utils.mime import MimeTypeDetector
 
 
 class FileItem(QStandardItem):
     """File system item for tree view."""
 
-    def __init__(self, path: str, is_dir: bool = False):
+    def __init__(self, path: str, is_dir: bool = False, show_hidden: bool = False):
         super().__init__()
         self._path = path
         self._is_dir = is_dir
         self._is_loaded = False
+        self._show_hidden = show_hidden
 
         # Set display text
         self.setText(os.path.basename(path))
@@ -81,6 +99,234 @@ class FileItem(QStandardItem):
         """Check if is directory."""
         return self._is_dir
 
+    def build_info_tooltip(self) -> str:
+        """Build tooltip text for the item."""
+        name = html.escape(self.text() or os.path.basename(self._path) or self._path)
+        path = html.escape(self._path)
+
+        if self._is_dir:
+            return self._build_directory_tooltip(name, path)
+        return self._build_file_tooltip(name, path)
+
+    def _build_directory_tooltip(self, name: str, path: str) -> str:
+        """Build folder tooltip."""
+        try:
+            entries = os.listdir(self._path)
+            if not self._show_hidden:
+                entries = [entry for entry in entries if not entry.startswith(".")]
+            item_count = len(entries)
+            items_text = f"{item_count} item{'s' if item_count != 1 else ''}"
+        except OSError:
+            items_text = "Unavailable"
+
+        return (
+            "<qt>"
+            "<b>Folder Information</b><br>"
+            f"<b>Name:</b> {name}<br>"
+            "<b>Type:</b> Folder<br>"
+            f"<b>Items:</b> {html.escape(items_text)}<br>"
+            f"<b>Path:</b> {path}"
+            "</qt>"
+        )
+
+    def _build_file_tooltip(self, name: str, path: str) -> str:
+        """Build file tooltip."""
+        try:
+            stat = os.stat(self._path)
+            size_text = FormatUtils.format_size(stat.st_size)
+            modified_text = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        except OSError:
+            size_text = "Unavailable"
+            modified_text = "Unavailable"
+
+        file_type, mime_type = MimeTypeDetector.detect_path(self._path)
+        type_text = file_type.upper() if file_type else "UNKNOWN"
+
+        return (
+            "<qt>"
+            "<b>File Information</b><br>"
+            f"<b>Name:</b> {name}<br>"
+            f"<b>Size:</b> {html.escape(size_text)}<br>"
+            f"<b>Type:</b> {html.escape(type_text)}<br>"
+            f"<b>MIME:</b> {html.escape(mime_type)}<br>"
+            f"<b>Modified:</b> {html.escape(modified_text)}<br>"
+            f"<b>Path:</b> {path}"
+            "</qt>"
+        )
+
+
+class FileTreeDelegate(QStyledItemDelegate):
+    """Draw an info icon immediately after the file name."""
+
+    _ICON_SIZE = 12
+    _ICON_MARGIN_LEFT = 6
+    _ICON_MARGIN_RIGHT = 8
+
+    def paint(self, painter, option, index):
+        """Paint the row with a trailing info icon."""
+        item = self._get_item(index)
+        if item is None:
+            super().paint(painter, option, index)
+            return
+
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+
+        text_rect = self._text_rect(opt)
+        available_width = max(
+            0,
+            text_rect.width() - self._ICON_SIZE - self._ICON_MARGIN_LEFT - self._ICON_MARGIN_RIGHT,
+        )
+        opt.text = opt.fontMetrics.elidedText(
+            opt.text,
+            Qt.TextElideMode.ElideMiddle,
+            available_width,
+        )
+
+        super().paint(painter, opt, index)
+
+        info_rect = self.info_icon_rect(opt, index)
+        if not info_rect.isValid():
+            return
+
+        self._paint_info_icon(painter, info_rect, opt)
+
+    def info_icon_rect(self, option, index) -> QRect:
+        """Return the info icon rectangle for the given index."""
+        item = self._get_item(index)
+        if item is None:
+            return QRect()
+
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+
+        text_rect = self._text_rect(opt)
+        available_width = max(
+            0,
+            text_rect.width() - self._ICON_SIZE - self._ICON_MARGIN_LEFT - self._ICON_MARGIN_RIGHT,
+        )
+        display_text = opt.fontMetrics.elidedText(
+            opt.text,
+            Qt.TextElideMode.ElideMiddle,
+            available_width,
+        )
+        display_width = opt.fontMetrics.horizontalAdvance(display_text)
+
+        max_x = opt.rect.right() - self._ICON_SIZE - self._ICON_MARGIN_RIGHT
+        icon_x = min(text_rect.left() + display_width + self._ICON_MARGIN_LEFT, max_x)
+        icon_x = max(icon_x, text_rect.left())
+        icon_y = opt.rect.top() + (opt.rect.height() - self._ICON_SIZE) // 2
+
+        return QRect(icon_x, icon_y, self._ICON_SIZE, self._ICON_SIZE)
+
+    def _get_item(self, index) -> FileItem | None:
+        """Resolve the file item for the index."""
+        if not index.isValid():
+            return None
+
+        model = index.model()
+        if not hasattr(model, "itemFromIndex"):
+            return None
+
+        item = model.itemFromIndex(index)
+        return item if isinstance(item, FileItem) else None
+
+    def _text_rect(self, option: QStyleOptionViewItem) -> QRect:
+        """Get the text rectangle for the item."""
+        widget = option.widget
+        style = widget.style() if widget is not None else self.parent().style()
+        return style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, widget)
+
+    def _paint_info_icon(self, painter, rect: QRect, option: QStyleOptionViewItem):
+        """Paint a compact circled info icon."""
+        if option.state & QStyle.StateFlag.State_Selected:
+            color = QColor("#ffffff")
+        elif option.state & QStyle.StateFlag.State_MouseOver:
+            color = QColor("#9CDCFE")
+        else:
+            color = QColor("#858585")
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(color)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
+
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(max(font.pointSize() - 1, 7))
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "i")
+        painter.restore()
+
+
+class FileTreeView(QTreeView):
+    """Tree view with icon-only hover tooltips."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+
+    def tooltip_for_pos(self, pos) -> str:
+        """Return the tooltip text if the mouse is over an info icon."""
+        index, rect = self._info_hit_test(pos)
+        if not index.isValid() or not rect.contains(pos):
+            return ""
+
+        model = self.model()
+        if not hasattr(model, "itemFromIndex"):
+            return ""
+
+        item = model.itemFromIndex(index)
+        if not isinstance(item, FileItem):
+            return ""
+
+        return item.build_info_tooltip()
+
+    def mouseMoveEvent(self, event):
+        """Update cursor only when hovering the info icon."""
+        cursor_shape = Qt.CursorShape.ArrowCursor
+        _, rect = self._info_hit_test(event.position().toPoint())
+        if rect.isValid() and rect.contains(event.position().toPoint()):
+            cursor_shape = Qt.CursorShape.PointingHandCursor
+        self.viewport().setCursor(cursor_shape)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        """Restore the default cursor when leaving the tree."""
+        self.viewport().unsetCursor()
+        super().leaveEvent(event)
+
+    def viewportEvent(self, event):
+        """Show tooltip only for the info icon hit area."""
+        if event.type() == QEvent.Type.ToolTip:
+            tooltip = self.tooltip_for_pos(event.pos())
+            if tooltip:
+                index = self.indexAt(event.pos())
+                QToolTip.showText(event.globalPos(), tooltip, self.viewport(), self.visualRect(index))
+            else:
+                QToolTip.hideText()
+                event.ignore()
+            return True
+
+        return super().viewportEvent(event)
+
+    def _info_hit_test(self, pos):
+        """Resolve the item index and icon rect for a viewport position."""
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return QModelIndex(), QRect()
+
+        delegate = self.itemDelegateForIndex(index)
+        if not hasattr(delegate, "info_icon_rect"):
+            return QModelIndex(), QRect()
+
+        option = QStyleOptionViewItem()
+        self.initViewItemOption(option)
+        option.rect = self.visualRect(index)
+
+        return index, delegate.info_icon_rect(option, index)
+
 
 class FileTreeModel(QStandardItemModel):
     """File tree model."""
@@ -90,7 +336,7 @@ class FileTreeModel(QStandardItemModel):
         self._root_path = ""
         self._show_hidden = False
 
-        # Set column count
+        # Single tree column; the trailing info icon is painted by a delegate.
         self.setColumnCount(1)
 
     def set_root_path(self, path: str):
@@ -102,7 +348,7 @@ class FileTreeModel(QStandardItemModel):
             return
 
         # Add root item
-        root_item = FileItem(path, True)
+        root_item = FileItem(path, True, self._show_hidden)
         root_item.setText(os.path.basename(path) or path)
         self.appendRow(root_item)
 
@@ -136,7 +382,7 @@ class FileTreeModel(QStandardItemModel):
         # Add directories
         for name in sorted(dirs):
             path = os.path.join(parent_item.path, name)
-            child = FileItem(path, True)
+            child = FileItem(path, True, self._show_hidden)
             parent_item.appendRow(child)
             # Add placeholder for lazy loading
             child.appendRow(QStandardItem())
@@ -144,7 +390,7 @@ class FileTreeModel(QStandardItemModel):
         # Add files
         for name in sorted(files):
             path = os.path.join(parent_item.path, name)
-            child = FileItem(path, False)
+            child = FileItem(path, False, self._show_hidden)
             parent_item.appendRow(child)
 
         parent_item._is_loaded = True
@@ -223,9 +469,10 @@ class FileBrowser(QWidget):
         layout.addWidget(self._path_bar)
 
         # Tree view - create first so header can use it
-        self._tree_view = QTreeView()
+        self._tree_view = FileTreeView()
         self._model = FileTreeModel()
         self._tree_view.setModel(self._model)
+        self._tree_view.setItemDelegate(FileTreeDelegate(self._tree_view))
         self._tree_view.setAnimated(True)
         self._tree_view.setIndentation(16)
         self._tree_view.setSortingEnabled(True)

@@ -89,6 +89,7 @@ _translations: Dict[str, Dict[str, str]] = {
         "status_offset": "Offset: {}",
         "status_selection": "Sel: {} bytes",
         "status_size": "Size: {}",
+        "status_saved": "Saved",
 
         # Panels
         "panel_file_info": "File Information",
@@ -244,6 +245,7 @@ _translations: Dict[str, Dict[str, str]] = {
         "status_offset": "偏移: {}",
         "status_selection": "选区: {} 字节",
         "status_size": "大小: {}",
+        "status_saved": "已保存",
 
         # Panels
         "panel_file_info": "文件信息",
