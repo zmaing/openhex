@@ -267,6 +267,13 @@ class OpenHexMainWindow(QMainWindow):
         view_menu.addAction(show_value_panel_action)
         self._show_value_panel_action = show_value_panel_action
 
+        show_structure_panel_action = QAction(self._tr("menu_structure_panel"), self)
+        show_structure_panel_action.setCheckable(True)
+        show_structure_panel_action.setChecked(False)
+        show_structure_panel_action.triggered.connect(self._on_toggle_structure_panel)
+        view_menu.addAction(show_structure_panel_action)
+        self._show_structure_panel_action = show_structure_panel_action
+
         # Folding submenu
         folding_menu = view_menu.addMenu(self._tr("menu_folding"))
 
@@ -471,6 +478,7 @@ class OpenHexMainWindow(QMainWindow):
         self._sync_side_panel_actions(
             self._hex_editor.is_ai_panel_visible(),
             self._hex_editor.is_value_panel_visible(),
+            self._hex_editor.is_structure_panel_visible(),
         )
 
     def _init_status_bar(self):
@@ -708,15 +716,31 @@ class OpenHexMainWindow(QMainWindow):
         """Toggle Value panel."""
         self._hex_editor.toggle_value_panel()
 
-    def _on_side_panel_state_changed(self, ai_visible: bool, value_visible: bool, layout_mode: str):
-        """Sync menu check states with the embedded side panel controls."""
-        self._sync_side_panel_actions(ai_visible, value_visible)
+    def _on_toggle_structure_panel(self):
+        """Toggle structure panel."""
+        self._hex_editor.toggle_structure_panel()
 
-    def _sync_side_panel_actions(self, ai_visible: bool, value_visible: bool):
+    def _on_side_panel_state_changed(
+        self,
+        ai_visible: bool,
+        value_visible: bool,
+        structure_visible: bool,
+        layout_mode: str,
+    ):
+        """Sync menu check states with the embedded side panel controls."""
+        self._sync_side_panel_actions(ai_visible, value_visible, structure_visible)
+
+    def _sync_side_panel_actions(
+        self,
+        ai_visible: bool,
+        value_visible: bool,
+        structure_visible: bool,
+    ):
         """Update panel menu actions without retriggering toggles."""
         for action, visible in (
             (getattr(self, "_show_ai_panel_action", None), ai_visible),
             (getattr(self, "_show_value_panel_action", None), value_visible),
+            (getattr(self, "_show_structure_panel_action", None), structure_visible),
         ):
             if action is None:
                 continue

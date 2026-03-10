@@ -7,9 +7,11 @@ QApplication singleton management and global application state.
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QSettings, QCoreApplication
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
+from pathlib import Path
 
 import os
 import sys
+import PyQt6
 
 from .utils.logger import logger
 from .utils.i18n import set_language
@@ -21,6 +23,7 @@ class OpenHexApp(QApplication):
     _instance = None
 
     def __init__(self, argv):
+        self._configure_qt_plugin_path()
         super().__init__(argv)
         OpenHexApp._instance = self
         self._init_application()
@@ -59,6 +62,15 @@ class OpenHexApp(QApplication):
         self._set_default_palette()
 
         logger.info("openhex application initialized")
+
+    def _configure_qt_plugin_path(self):
+        """Prefer the platform plugins bundled with the active PyQt6 install."""
+        if os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH"):
+            return
+
+        plugin_dir = Path(PyQt6.__file__).resolve().parent / "Qt6" / "plugins" / "platforms"
+        if plugin_dir.exists():
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(plugin_dir)
 
     def _set_default_font(self):
         """Set default font for the application."""
