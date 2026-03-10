@@ -260,6 +260,13 @@ class HexForgeMainWindow(QMainWindow):
         view_menu.addAction(show_ai_panel_action)
         self._show_ai_panel_action = show_ai_panel_action
 
+        show_value_panel_action = QAction(self._tr("menu_value_panel"), self)
+        show_value_panel_action.setCheckable(True)
+        show_value_panel_action.setChecked(True)
+        show_value_panel_action.triggered.connect(self._on_toggle_value_panel)
+        view_menu.addAction(show_value_panel_action)
+        self._show_value_panel_action = show_value_panel_action
+
         # Folding submenu
         folding_menu = view_menu.addMenu(self._tr("menu_folding"))
 
@@ -460,6 +467,11 @@ class HexForgeMainWindow(QMainWindow):
         """Initialize central widget with hex editor."""
         self._hex_editor = HexEditorMainWindow()
         self.setCentralWidget(self._hex_editor)
+        self._hex_editor.side_panel_state_changed.connect(self._on_side_panel_state_changed)
+        self._sync_side_panel_actions(
+            self._hex_editor.is_ai_panel_visible(),
+            self._hex_editor.is_value_panel_visible(),
+        )
 
     def _init_status_bar(self):
         """Initialize status bar."""
@@ -691,6 +703,26 @@ class HexForgeMainWindow(QMainWindow):
     def _on_toggle_ai_panel(self):
         """Toggle AI panel."""
         self._hex_editor.toggle_ai_panel()
+
+    def _on_toggle_value_panel(self):
+        """Toggle Value panel."""
+        self._hex_editor.toggle_value_panel()
+
+    def _on_side_panel_state_changed(self, ai_visible: bool, value_visible: bool, layout_mode: str):
+        """Sync menu check states with the embedded side panel controls."""
+        self._sync_side_panel_actions(ai_visible, value_visible)
+
+    def _sync_side_panel_actions(self, ai_visible: bool, value_visible: bool):
+        """Update panel menu actions without retriggering toggles."""
+        for action, visible in (
+            (getattr(self, "_show_ai_panel_action", None), ai_visible),
+            (getattr(self, "_show_value_panel_action", None), value_visible),
+        ):
+            if action is None:
+                continue
+            blocked = action.blockSignals(True)
+            action.setChecked(visible)
+            action.blockSignals(blocked)
 
     def _on_folding_detect(self):
         """Auto-detect folding regions."""

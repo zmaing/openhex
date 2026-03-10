@@ -4,12 +4,12 @@ HexEditor Main Window
 Main hex editor widget with panels and views.
 """
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
                              QTabWidget, QLabel, QProgressBar, QFrame, QPushButton,
-                             QStackedWidget, QTextEdit)
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
+                             QTextEdit, QToolButton, QButtonGroup)
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QSettings, QTimer
 from typing import List
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 
 import os
 import hashlib
@@ -37,6 +37,7 @@ class HexEditorMainWindow(QWidget):
     file_opened = pyqtSignal(str)
     file_saved = pyqtSignal(str)
     cursor_changed = pyqtSignal(int)
+    side_panel_state_changed = pyqtSignal(bool, bool, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,6 +48,14 @@ class HexEditorMainWindow(QWidget):
         self._splitter = None
         self._file_tree_width = 250
         self._right_panel_width = 280
+        self._right_panel_standard_width = 280
+        self._right_panel_horizontal_width = 520
+        self._panel_visibility = {
+            "value": True,
+            "ai": True,
+        }
+        self._panel_layout_mode = "tabs"
+        self._active_panel_id = "value"
 
         # AI Manager
         self._ai_manager = AIManager(self)
@@ -71,31 +80,67 @@ class HexEditorMainWindow(QWidget):
 
         self._init_ui()
         self._connect_signals()
+        self._load_side_panel_settings()
         self._load_ai_settings()
 
         logger.info("HexEditorMainWindow initialized")
 
+    def _get_settings(self) -> QSettings:
+        """Return application settings when available."""
+        app = QApplication.instance()
+        settings = getattr(app, "settings", None)
+        if isinstance(settings, QSettings):
+            return settings
+        if callable(settings):
+            candidate = settings()
+            if isinstance(candidate, QSettings):
+                return candidate
+        return QSettings("HexForge", "HexForge")
+
     def _load_ai_settings(self):
         """Load AI settings from app settings."""
-        app = self.window()
-        if hasattr(app, 'settings'):
-            s = app.settings()
-            settings = {
-                'enabled': s.value('ai_enabled', True, type=bool),
-                'provider': s.value('ai_provider', 'local'),
-                'local': {
-                    'endpoint': s.value('ai_local_endpoint', 'http://localhost:11434'),
-                    'model': s.value('ai_local_model', 'qwen:7b'),
-                },
-                'cloud': {
-                    'provider': s.value('ai_cloud_provider', 'openai'),
-                    'api_key': s.value('ai_cloud_api_key', ''),
-                    'base_url': s.value('ai_cloud_base_url', ''),
-                    'model': s.value('ai_cloud_model', 'gpt-4o'),
-                }
+        s = self._get_settings()
+        settings = {
+            'enabled': s.value('ai_enabled', True, type=bool),
+            'provider': s.value('ai_provider', 'local'),
+            'local': {
+                'endpoint': s.value('ai_local_endpoint', 'http://localhost:11434'),
+                'model': s.value('ai_local_model', 'qwen:7b'),
+            },
+            'cloud': {
+                'provider': s.value('ai_cloud_provider', 'openai'),
+                'api_key': s.value('ai_cloud_api_key', ''),
+                'base_url': s.value('ai_cloud_base_url', ''),
+                'model': s.value('ai_cloud_model', 'gpt-4o'),
             }
-            self._ai_manager.configure(settings)
-            self._ai_status.setText(f"Provider: {settings.get('provider', 'local').title()}")
+        }
+        self._ai_manager.configure(settings)
+        self._ai_status.setText(f"Provider: {settings.get('provider', 'local').title()}")
+
+    def _load_side_panel_settings(self):
+        """Restore side panel visibility and layout settings."""
+        s = self._get_settings()
+        self._panel_visibility["value"] = s.value("side_panel/value_visible", True, type=bool)
+        self._panel_visibility["ai"] = s.value("side_panel/ai_visible", True, type=bool)
+        layout_mode = s.value("side_panel/layout_mode", "tabs", type=str)
+        if layout_mode == "split":
+            layout_mode = "vertical"
+        self._panel_layout_mode = layout_mode if layout_mode in {"tabs", "vertical", "horizontal"} else "tabs"
+        active_panel_id = s.value("side_panel/active_panel", "value", type=str)
+        self._active_panel_id = active_panel_id if active_panel_id in self._panel_visibility else "value"
+        self._refresh_side_panel_layout()
+        self._sync_right_panel_visibility()
+        self._apply_right_panel_width_for_layout()
+        self._schedule_right_panel_width_restore()
+        self._emit_side_panel_state_changed()
+
+    def _save_side_panel_settings(self):
+        """Persist side panel visibility and layout settings."""
+        s = self._get_settings()
+        s.setValue("side_panel/value_visible", self._panel_visibility["value"])
+        s.setValue("side_panel/ai_visible", self._panel_visibility["ai"])
+        s.setValue("side_panel/layout_mode", self._panel_layout_mode)
+        s.setValue("side_panel/active_panel", self._active_panel_id)
 
     def _get_file_settings_key(self, file_path: str) -> str:
         """Generate a unique key for file settings based on absolute path."""
@@ -106,20 +151,15 @@ class HexEditorMainWindow(QWidget):
 
     def _get_file_bytes_per_row(self, file_path: str) -> int:
         """Load bytes_per_row setting for a file from QSettings."""
-        app = self.window()
-        if hasattr(app, 'settings'):
-            s = app.settings()
-            key = self._get_file_settings_key(file_path)
-            return s.value(key, 32, type=int)
-        return 32
+        s = self._get_settings()
+        key = self._get_file_settings_key(file_path)
+        return s.value(key, 32, type=int)
 
     def _set_file_bytes_per_row(self, file_path: str, bytes_per_row: int):
         """Save bytes_per_row setting for a file to QSettings."""
-        app = self.window()
-        if hasattr(app, 'settings'):
-            s = app.settings()
-            key = self._get_file_settings_key(file_path)
-            s.setValue(key, bytes_per_row)
+        s = self._get_settings()
+        key = self._get_file_settings_key(file_path)
+        s.setValue(key, bytes_per_row)
 
     def _init_ui(self):
         """Initialize UI components."""
@@ -279,8 +319,6 @@ class HexEditorMainWindow(QWidget):
     def _show_status_message(self, message: str):
         """Show a temporary message in the status bar."""
         self._msg_label.setText(message)
-        # Clear after 3 seconds
-        from PyQt6.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self._msg_label.setText(""))
 
     def _create_right_panel(self):
@@ -288,9 +326,18 @@ class HexEditorMainWindow(QWidget):
         widget = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # Tabs for right panel
+        self._right_panel_content = QWidget()
+        self._right_panel_content.setStyleSheet("background-color: #252526;")
+        self._right_panel_content_layout = QVBoxLayout()
+        self._right_panel_content_layout.setContentsMargins(0, 0, 0, 0)
+        self._right_panel_content_layout.setSpacing(0)
+        self._right_panel_content.setLayout(self._right_panel_content_layout)
+
         self._panel_tabs = QTabWidget()
+        self._panel_tabs.setDocumentMode(True)
+        self._panel_tabs.currentChanged.connect(self._on_side_panel_tab_changed)
         self._panel_tabs.setStyleSheet("""
             QTabWidget::pane {
                 background-color: #252526;
@@ -300,26 +347,413 @@ class HexEditorMainWindow(QWidget):
                 background-color: #2d2d2d;
                 color: #cccccc;
                 padding: 6px 12px;
+                border: none;
             }
             QTabBar::tab:selected {
                 background-color: #252526;
                 color: #ffffff;
             }
+            QTabBar::tab:hover:!selected {
+                background-color: #3c3c3c;
+            }
         """)
 
-        # Data Value tab
+        self._panel_vertical_splitter = self._create_side_panel_splitter(Qt.Orientation.Vertical)
+        self._panel_horizontal_splitter = self._create_side_panel_splitter(Qt.Orientation.Horizontal)
+
         self._data_value = self._create_data_value_panel()
-        self._panel_tabs.addTab(self._data_value, "Value")
-
-        # AI Panel
         self._ai_panel = self._create_ai_panel()
-        self._panel_tabs.addTab(self._ai_panel, "AI")
+        self._side_panels = {
+            "value": self._data_value,
+            "ai": self._ai_panel,
+        }
 
-        layout.addWidget(self._panel_tabs)
+        layout.addWidget(self._right_panel_content)
+        self._right_panel_status_bar = self._create_side_panel_status_bar()
+        layout.addWidget(self._right_panel_status_bar)
         widget.setLayout(layout)
-        widget.setMaximumWidth(320)
+        widget.setMinimumWidth(240)
 
+        self._refresh_side_panel_layout()
         return widget
+
+    def _create_side_panel_splitter(self, orientation: Qt.Orientation):
+        """Create a splitter used for multi-panel layouts."""
+        splitter = QSplitter(orientation)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(1)
+        splitter.setStyleSheet("""
+            QSplitter {
+                background-color: #252526;
+            }
+            QSplitter::handle {
+                background-color: #3c3c3c;
+            }
+        """)
+        return splitter
+
+    def _create_side_panel_status_bar(self):
+        """Create the side panel status bar shown when multiple panels are active."""
+        bar = QFrame()
+        bar.setFixedHeight(30)
+        bar.setStyleSheet("""
+            QFrame {
+                background-color: #2d2d30;
+                border-top: 1px solid #3c3c3c;
+            }
+            QPushButton {
+                background-color: transparent;
+                color: #cccccc;
+                border: none;
+                border-radius: 3px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #37373d;
+            }
+            QPushButton:checked {
+                background-color: #094771;
+                color: #ffffff;
+            }
+            QLabel {
+                color: #cccccc;
+                border: none;
+            }
+            QToolButton {
+                background-color: transparent;
+                border: none;
+                padding: 4px;
+                border-radius: 3px;
+            }
+            QToolButton:hover {
+                background-color: #37373d;
+            }
+            QToolButton:checked {
+                background-color: #094771;
+            }
+            QToolButton:disabled {
+                opacity: 0.45;
+            }
+        """)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(8, 0, 6, 0)
+        layout.setSpacing(4)
+
+        self._right_panel_status_label = QLabel("")
+        layout.addWidget(self._right_panel_status_label)
+        layout.addStretch()
+
+        self._layout_button_group = QButtonGroup(self)
+        self._layout_button_group.setExclusive(True)
+        self._panel_layout_buttons = {}
+
+        for layout_mode, tooltip in (
+            ("tabs", tr("panel_layout_tabs")),
+            ("vertical", tr("panel_layout_vertical")),
+            ("horizontal", tr("panel_layout_horizontal")),
+        ):
+            button = QToolButton()
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setIcon(self._create_panel_layout_icon(layout_mode))
+            button.setToolTip(tooltip)
+            button.clicked.connect(lambda checked=False, mode=layout_mode: self.set_side_panel_layout_mode(mode))
+            self._layout_button_group.addButton(button)
+            self._panel_layout_buttons[layout_mode] = button
+            layout.addWidget(button)
+
+        bar.setLayout(layout)
+        bar.hide()
+
+        self._update_panel_layout_button()
+        return bar
+
+    def _get_panel_label(self, panel_id: str) -> str:
+        """Return the user-facing label for a side panel."""
+        return {
+            "value": tr("panel_value_tab"),
+            "ai": tr("panel_ai_tab"),
+        }.get(panel_id, panel_id.title())
+
+    def _get_active_panel_ids(self) -> List[str]:
+        """Return visible side panels in their display order."""
+        return [panel_id for panel_id in ("value", "ai") if self._panel_visibility.get(panel_id, False)]
+
+    def _clear_layout(self, layout):
+        """Detach all widgets from a layout."""
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+
+    def _detach_side_panel_widgets(self):
+        """Remove side panels from any temporary container before rebuilding."""
+        blocked = self._panel_tabs.blockSignals(True)
+        while self._panel_tabs.count():
+            widget = self._panel_tabs.widget(0)
+            self._panel_tabs.removeTab(0)
+            widget.setParent(None)
+        self._panel_tabs.blockSignals(blocked)
+
+        for splitter in (self._panel_vertical_splitter, self._panel_horizontal_splitter):
+            while splitter.count():
+                widget = splitter.widget(0)
+                if widget is None:
+                    break
+                widget.setParent(None)
+
+        for widget in self._side_panels.values():
+            if widget.parent() is self._right_panel_content:
+                widget.setParent(None)
+
+    def _activate_side_panel_widgets(self, panel_ids: List[str]):
+        """Ensure moved panel widgets become visible again after layout changes."""
+        for panel_id in panel_ids:
+            widget = self._side_panels[panel_id]
+            widget.setVisible(True)
+            widget.show()
+            widget.updateGeometry()
+
+    def _ensure_right_panel_width(self, minimum_width: int):
+        """Expand the right panel when the active layout needs more space."""
+        if self._splitter is None or not self._is_side_panel_visible(self._right_panel, 2):
+            return
+
+        sizes = self._splitter.sizes()
+        if len(sizes) <= 2 or sizes[2] >= minimum_width:
+            return
+
+        delta = minimum_width - sizes[2]
+        if delta <= 0:
+            return
+
+        grow = min(delta, max(0, sizes[1] - 200))
+        if grow <= 0:
+            return
+
+        sizes[2] += grow
+        sizes[1] -= grow
+        self._right_panel_width = sizes[2]
+        self._right_panel_horizontal_width = sizes[2]
+        self._splitter.setSizes(sizes)
+
+    def _capture_right_panel_width(self):
+        """Remember the current right panel width for the active layout family."""
+        if self._splitter is None or not self._is_side_panel_visible(self._right_panel, 2):
+            return
+
+        sizes = self._splitter.sizes()
+        if len(sizes) <= 2 or sizes[2] <= 0:
+            return
+
+        current_width = sizes[2]
+        self._right_panel_width = current_width
+        if self._panel_layout_mode == "horizontal":
+            self._right_panel_horizontal_width = current_width
+        else:
+            self._right_panel_standard_width = current_width
+
+    def _set_right_panel_width(self, target_width: int):
+        """Resize the right splitter pane to a target width when possible."""
+        if self._splitter is None or not self._is_side_panel_visible(self._right_panel, 2):
+            return
+
+        sizes = self._splitter.sizes()
+        if len(sizes) <= 2:
+            return
+
+        available = sizes[1] + sizes[2]
+        max_target = max(160, available - 200)
+        clamped_target = max(160, min(target_width, max_target))
+        if clamped_target == sizes[2]:
+            self._right_panel_width = clamped_target
+            return
+
+        sizes[2] = clamped_target
+        sizes[1] = available - clamped_target
+        self._right_panel_width = clamped_target
+        self._splitter.setSizes(sizes)
+
+    def _apply_right_panel_width_for_layout(self):
+        """Restore the expected right panel width for the current side panel layout."""
+        active_panel_ids = self._get_active_panel_ids()
+        if not active_panel_ids:
+            return
+
+        if len(active_panel_ids) > 1 and self._panel_layout_mode == "horizontal":
+            target_width = max(self._right_panel_horizontal_width, 520)
+        else:
+            target_width = self._right_panel_standard_width
+
+        self._set_right_panel_width(target_width)
+
+    def _schedule_right_panel_width_restore(self):
+        """Apply right panel width after Qt finishes processing pending layout changes."""
+        QTimer.singleShot(0, self._apply_right_panel_width_for_layout)
+
+    def _refresh_side_panel_layout(self):
+        """Rebuild the right-side panel area based on visibility and layout state."""
+        active_panel_ids = self._get_active_panel_ids()
+        if self._active_panel_id not in active_panel_ids:
+            self._active_panel_id = active_panel_ids[0] if active_panel_ids else "value"
+
+        self._clear_layout(self._right_panel_content_layout)
+        self._detach_side_panel_widgets()
+
+        if not active_panel_ids:
+            self._update_side_panel_status_bar(active_panel_ids)
+            return
+
+        if len(active_panel_ids) == 1:
+            self._right_panel_content_layout.addWidget(self._side_panels[active_panel_ids[0]])
+            self._activate_side_panel_widgets(active_panel_ids)
+            self._active_panel_id = active_panel_ids[0]
+            self._update_side_panel_status_bar(active_panel_ids)
+            return
+
+        if self._panel_layout_mode == "vertical":
+            splitter = self._panel_vertical_splitter
+            self._right_panel_content_layout.addWidget(splitter)
+            for panel_id in active_panel_ids:
+                splitter.addWidget(self._side_panels[panel_id])
+            self._activate_side_panel_widgets(active_panel_ids)
+            splitter.setVisible(True)
+            splitter.show()
+            QTimer.singleShot(0, lambda: splitter.setSizes([1] * len(active_panel_ids)))
+        elif self._panel_layout_mode == "horizontal":
+            splitter = self._panel_horizontal_splitter
+            self._right_panel_content_layout.addWidget(splitter)
+            for panel_id in active_panel_ids:
+                splitter.addWidget(self._side_panels[panel_id])
+            self._activate_side_panel_widgets(active_panel_ids)
+            splitter.setVisible(True)
+            splitter.show()
+            self._ensure_right_panel_width(520)
+            QTimer.singleShot(0, lambda: splitter.setSizes([1] * len(active_panel_ids)))
+        else:
+            blocked = self._panel_tabs.blockSignals(True)
+            self._right_panel_content_layout.addWidget(self._panel_tabs)
+            for panel_id in active_panel_ids:
+                self._panel_tabs.addTab(self._side_panels[panel_id], self._get_panel_label(panel_id))
+            target_index = active_panel_ids.index(self._active_panel_id) if self._active_panel_id in active_panel_ids else 0
+            self._panel_tabs.setCurrentIndex(target_index)
+            self._panel_tabs.blockSignals(blocked)
+            self._activate_side_panel_widgets(active_panel_ids)
+            self._panel_tabs.setVisible(True)
+            self._panel_tabs.show()
+
+        self._right_panel_content.setVisible(True)
+        self._right_panel_content.show()
+        right_panel = getattr(self, "_right_panel", None)
+        if right_panel is not None:
+            right_panel.updateGeometry()
+        self._update_side_panel_status_bar(active_panel_ids)
+
+    def _update_side_panel_status_bar(self, active_panel_ids: List[str]):
+        """Update side panel buttons and layout action visibility."""
+        show_bar = len(active_panel_ids) > 1
+        self._right_panel_status_bar.setVisible(show_bar)
+        self._update_panel_layout_button()
+
+        if not show_bar:
+            return
+
+        labels = [self._get_panel_label(panel_id) for panel_id in active_panel_ids]
+        self._right_panel_status_label.setText(" / ".join(labels))
+
+    def _update_panel_layout_button(self):
+        """Refresh the side panel layout switcher icon and action state."""
+        has_multiple = len(self._get_active_panel_ids()) > 1
+        for layout_mode, button in self._panel_layout_buttons.items():
+            blocked = button.blockSignals(True)
+            button.setChecked(self._panel_layout_mode == layout_mode)
+            button.setEnabled(has_multiple)
+            button.blockSignals(blocked)
+
+    def _create_panel_layout_icon(self, mode: str) -> QIcon:
+        """Create a VS Code inspired icon for tabs/split mode."""
+        size = QSize(16, 16)
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor("#cccccc"))
+        pen.setWidth(1)
+        painter.setPen(pen)
+
+        if mode == "vertical":
+            painter.drawRoundedRect(2, 2, 12, 12, 1.5, 1.5)
+            painter.drawLine(3, 8, 13, 8)
+        elif mode == "horizontal":
+            painter.drawRoundedRect(2, 2, 12, 12, 1.5, 1.5)
+            painter.drawLine(8, 3, 8, 13)
+        else:
+            painter.drawRoundedRect(2, 4, 12, 10, 1.5, 1.5)
+            painter.drawLine(2, 6, 14, 6)
+            painter.fillRect(3, 2, 4, 2, QColor("#cccccc"))
+            painter.fillRect(8, 2, 3, 2, QColor("#777777"))
+
+        painter.end()
+        return QIcon(pixmap)
+
+    def _sync_right_panel_visibility(self):
+        """Show or hide the right panel based on active side panels."""
+        self._set_side_panel_visibility(
+            self._right_panel,
+            2,
+            bool(self._get_active_panel_ids()),
+            "_right_panel_width",
+            280,
+        )
+
+    def _emit_side_panel_state_changed(self):
+        """Notify outer UI that side panel state changed."""
+        self.side_panel_state_changed.emit(
+            self._panel_visibility["ai"],
+            self._panel_visibility["value"],
+            self._panel_layout_mode,
+        )
+
+    def is_ai_panel_visible(self) -> bool:
+        """Return whether the AI panel is enabled in the side panel."""
+        return self._panel_visibility["ai"]
+
+    def is_value_panel_visible(self) -> bool:
+        """Return whether the Value panel is enabled in the side panel."""
+        return self._panel_visibility["value"]
+
+    def side_panel_layout_mode(self) -> str:
+        """Return the current side panel layout mode."""
+        return self._panel_layout_mode
+
+    def set_side_panel_layout_mode(self, mode: str):
+        """Switch between tabbed and split layouts."""
+        if mode not in {"tabs", "vertical", "horizontal"} or self._panel_layout_mode == mode:
+            return
+
+        self._capture_right_panel_width()
+        self._panel_layout_mode = mode
+        self._refresh_side_panel_layout()
+        self._apply_right_panel_width_for_layout()
+        self._schedule_right_panel_width_restore()
+        self._save_side_panel_settings()
+        self._emit_side_panel_state_changed()
+
+    def _on_side_panel_tab_changed(self, index: int):
+        """Track the active tab for the right-side panel area."""
+        if index < 0:
+            return
+
+        widget = self._panel_tabs.widget(index)
+        for panel_id, panel_widget in self._side_panels.items():
+            if widget is panel_widget:
+                self._active_panel_id = panel_id
+                self._save_side_panel_settings()
+                break
 
     def _set_side_panel_visibility(self, panel: QWidget, index: int, visible: bool,
                                    size_attr: str, default_size: int):
@@ -497,6 +931,75 @@ class HexEditorMainWindow(QWidget):
         """Connect signals from hex view."""
         if hasattr(hex_view, 'edit_mode_changed'):
             hex_view.edit_mode_changed.connect(self._update_edit_mode_display)
+        if hasattr(hex_view, 'cursor_moved'):
+            hex_view.cursor_moved.connect(self._on_cursor_moved)
+        if hasattr(hex_view, 'selection_changed'):
+            hex_view.selection_changed.connect(self._on_selection_changed)
+
+    def _get_current_hex_view(self):
+        """Return the active hex view if available."""
+        current_widget = self._tab_widget.currentWidget()
+        if current_widget and hasattr(current_widget, 'hex_view'):
+            return current_widget.hex_view
+        return None
+
+    def _reset_value_panel(self):
+        """Clear the Value panel when no byte is available."""
+        self._value_offset.setText("0x00000000")
+        self._value_hex.setText("00")
+        self._value_dec_signed.setText("0")
+        self._value_dec_unsigned.setText("0")
+        self._value_bin.setText("00000000")
+        self._value_ascii.setText(".")
+        self._value_octal.setText("0o000")
+
+    def _update_value_panel(self, offset: int):
+        """Update the Value panel for the active document and byte offset."""
+        doc = self._document_model.current_document
+        if not doc or offset < 0 or offset >= doc.file_size:
+            self._reset_value_panel()
+            return
+
+        data = doc.read(offset, 1)
+        if not data:
+            self._reset_value_panel()
+            return
+
+        byte = data[0]
+        signed = byte - 256 if byte > 127 else byte
+        ascii_value = chr(byte) if 32 <= byte < 127 else "."
+
+        self._value_offset.setText(f"0x{offset:08X}")
+        self._value_hex.setText(f"{byte:02X}")
+        self._value_dec_signed.setText(str(signed))
+        self._value_dec_unsigned.setText(str(byte))
+        self._value_bin.setText(f"{byte:08b}")
+        self._value_ascii.setText(ascii_value)
+        self._value_octal.setText(f"0o{byte:03o}")
+
+    def _refresh_current_view_state(self):
+        """Refresh status labels and value panel from the active editor."""
+        hex_view = self._get_current_hex_view()
+        doc = self._document_model.current_document
+        if not hex_view or not doc:
+            self._pos_label.setText(tr("status_offset", "0x00000000"))
+            self._selection_label.setText(tr("status_selection", 0))
+            self._reset_value_panel()
+            return
+
+        offset = hex_view.get_offset_at_cursor()
+        self._on_cursor_moved(offset)
+
+    def _on_cursor_moved(self, offset: int):
+        """Update side UI from the active cursor position."""
+        self._pos_label.setText(tr("status_offset", f"0x{max(0, offset):08X}"))
+        self._update_value_panel(offset)
+        self.cursor_changed.emit(offset)
+
+    def _on_selection_changed(self, start: int, end: int):
+        """Update the status bar selection size."""
+        length = end - start + 1 if start >= 0 and end >= start else 0
+        self._selection_label.setText(tr("status_selection", length))
 
     # File operations
     def new_file(self):
@@ -1177,14 +1680,41 @@ class HexEditorMainWindow(QWidget):
         )
 
     def toggle_ai_panel(self):
-        """Toggle AI panel visibility."""
-        self._set_side_panel_visibility(
-            self._right_panel,
-            2,
-            not self._is_side_panel_visible(self._right_panel, 2),
-            "_right_panel_width",
-            280,
-        )
+        """Toggle AI panel visibility inside the side panel container."""
+        self.set_ai_panel_visible(not self.is_ai_panel_visible())
+
+    def toggle_value_panel(self):
+        """Toggle Value panel visibility inside the side panel container."""
+        self.set_value_panel_visible(not self.is_value_panel_visible())
+
+    def set_ai_panel_visible(self, visible: bool):
+        """Enable or disable the AI panel."""
+        self._set_panel_visible("ai", visible)
+
+    def set_value_panel_visible(self, visible: bool):
+        """Enable or disable the Value panel."""
+        self._set_panel_visible("value", visible)
+
+    def _set_panel_visible(self, panel_id: str, visible: bool):
+        """Update a specific side panel visibility flag."""
+        visible = bool(visible)
+        if self._panel_visibility.get(panel_id) == visible:
+            return
+
+        self._capture_right_panel_width()
+        self._panel_visibility[panel_id] = visible
+        active_panel_ids = self._get_active_panel_ids()
+        if panel_id in active_panel_ids:
+            self._active_panel_id = panel_id
+        elif self._active_panel_id not in active_panel_ids:
+            self._active_panel_id = active_panel_ids[0] if active_panel_ids else "value"
+
+        self._refresh_side_panel_layout()
+        self._sync_right_panel_visibility()
+        self._apply_right_panel_width_for_layout()
+        self._schedule_right_panel_width_restore()
+        self._save_side_panel_settings()
+        self._emit_side_panel_state_changed()
 
     # Navigation
     def go_to_next_bookmark(self):
@@ -1385,7 +1915,7 @@ class HexEditorMainWindow(QWidget):
 
         # Get current settings
         current_settings = {}
-        app = self.window()
+        app = QApplication.instance()
         if hasattr(app, '_ai_settings'):
             current_settings = app._ai_settings
 
@@ -1396,16 +1926,15 @@ class HexEditorMainWindow(QWidget):
             if hasattr(app, '_ai_settings'):
                 app._ai_settings = settings
             # Save to persistent storage
-            if hasattr(app, 'settings'):
-                s = app.settings()
-                s.setValue('ai_enabled', settings.get('enabled', True))
-                s.setValue('ai_provider', settings.get('provider', 'local'))
-                s.setValue('ai_local_endpoint', settings.get('local', {}).get('endpoint', ''))
-                s.setValue('ai_local_model', settings.get('local', {}).get('model', ''))
-                s.setValue('ai_cloud_provider', settings.get('cloud', {}).get('provider', ''))
-                s.setValue('ai_cloud_api_key', settings.get('cloud', {}).get('api_key', ''))
-                s.setValue('ai_cloud_base_url', settings.get('cloud', {}).get('base_url', ''))
-                s.setValue('ai_cloud_model', settings.get('cloud', {}).get('model', ''))
+            s = self._get_settings()
+            s.setValue('ai_enabled', settings.get('enabled', True))
+            s.setValue('ai_provider', settings.get('provider', 'local'))
+            s.setValue('ai_local_endpoint', settings.get('local', {}).get('endpoint', ''))
+            s.setValue('ai_local_model', settings.get('local', {}).get('model', ''))
+            s.setValue('ai_cloud_provider', settings.get('cloud', {}).get('provider', ''))
+            s.setValue('ai_cloud_api_key', settings.get('cloud', {}).get('api_key', ''))
+            s.setValue('ai_cloud_base_url', settings.get('cloud', {}).get('base_url', ''))
+            s.setValue('ai_cloud_model', settings.get('cloud', {}).get('model', ''))
 
             self._ai_status.setText(f"Provider: {settings.get('provider', 'local').title()}")
 
@@ -1420,8 +1949,9 @@ class HexEditorMainWindow(QWidget):
 
         # Connect hex view signals for status bar updates
         hex_view = hex_view_widget.hex_view
-        if hasattr(hex_view, 'edit_mode_changed'):
-            hex_view.edit_mode_changed.connect(self._update_edit_mode_display)
+        self._connect_hex_view_signals(hex_view)
+        hex_view_widget.data_changed.connect(self._refresh_current_view_state)
+        self._refresh_current_view_state()
 
     def _update_tab_name(self, index: int, doc: FileHandle):
         """Update tab name with modification indicator."""
@@ -1480,11 +2010,14 @@ class HexEditorMainWindow(QWidget):
             doc = self._document_model.get_document(index)
             if doc:
                 self._document_model.set_current_document(doc)
+        self._selection_label.setText(tr("status_selection", 0))
+        self._refresh_current_view_state()
 
     def _on_document_changed(self, doc: FileHandle):
         """Handle document change."""
         if doc:
             self._size_label.setText(f"Size: {FormatUtils.format_size(doc.file_size)}")
+        self._refresh_current_view_state()
 
     def _on_document_modified(self, doc: FileHandle):
         """Handle document modification."""

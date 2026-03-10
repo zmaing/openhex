@@ -47,6 +47,7 @@ _translations: Dict[str, Dict[str, str]] = {
         "menu_octal": "Octal",
         "menu_file_tree": "File Tree",
         "menu_ai_panel": "AI Panel",
+        "menu_value_panel": "Value Panel",
         "menu_folding": "Folding",
         "menu_auto_detect": "Auto-Detect Regions",
         "menu_fold_all": "Fold All",
@@ -95,6 +96,11 @@ _translations: Dict[str, Dict[str, str]] = {
         "panel_file_info": "File Information",
         "panel_data_inspector": "Data Inspector",
         "panel_ai_assistant": "AI Assistant",
+        "panel_value_tab": "VALUE",
+        "panel_ai_tab": "AI",
+        "panel_layout_tabs": "Tabs",
+        "panel_layout_vertical": "Split Up/Down",
+        "panel_layout_horizontal": "Split Left/Right",
 
         # Dialogs
         "dialog_arrangement": "Arrangement Settings",
@@ -203,6 +209,7 @@ _translations: Dict[str, Dict[str, str]] = {
         "menu_octal": "八进制",
         "menu_file_tree": "文件树",
         "menu_ai_panel": "AI面板",
+        "menu_value_panel": "Value面板",
         "menu_folding": "折叠",
         "menu_auto_detect": "自动检测区域",
         "menu_fold_all": "全部折叠",
@@ -251,6 +258,11 @@ _translations: Dict[str, Dict[str, str]] = {
         "panel_file_info": "文件信息",
         "panel_data_inspector": "数据检查器",
         "panel_ai_assistant": "AI助手",
+        "panel_value_tab": "VALUE",
+        "panel_ai_tab": "AI",
+        "panel_layout_tabs": "Tab页",
+        "panel_layout_vertical": "上下拆分",
+        "panel_layout_horizontal": "左右拆分",
 
         # Dialogs
         "dialog_arrangement": "排列设置",

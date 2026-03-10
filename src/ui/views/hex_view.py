@@ -2003,12 +2003,14 @@ class HexView(QTableView):
                     self._update_delegate_cursor()
                     # Refresh viewport to show cursor
                     self.viewport().update()
+                    self.cursor_moved.emit(self._cursor_byte_offset)
                     return  # Don't call super() - prevent default cell selection
 
                 # Update delegate cursor after click
                 self._update_delegate_cursor()
                 # Refresh viewport to show cursor
                 self.viewport().update()
+                self.cursor_moved.emit(self._cursor_byte_offset)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -2404,13 +2406,7 @@ class HexView(QTableView):
 
     def get_offset_at_cursor(self) -> int:
         """Get file offset at current cursor position."""
-        index = self.currentIndex()
-        if not index.isValid():
-            return 0
-
-        row = index.row()
-        total_per_row = self._model._bytes_per_row + self._model._header_length
-        return row * total_per_row
+        return max(0, getattr(self, "_cursor_byte_offset", 0))
 
     def scrollToOffset(self, offset: int):
         """Scroll to specific offset."""
