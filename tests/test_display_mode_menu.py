@@ -72,8 +72,8 @@ def test_display_mode_menu_is_exclusive():
         window.close()
 
 
-def test_file_tree_info_icon_replaces_info_tab():
-    """The file browser exposes file metadata via hover icon instead of a separate Info tab."""
+def test_file_tree_hover_text_replaces_info_tab():
+    """The file browser exposes file metadata when hovering the file name."""
     app = HexForgeApp.instance()
     window = HexForgeMainWindow()
     window.show()
@@ -108,11 +108,11 @@ def test_file_tree_info_icon_replaces_info_tab():
             option.rect = tree.visualRect(index)
 
             delegate = tree.itemDelegateForIndex(index)
-            info_rect = delegate.info_icon_rect(option, index)
+            text_rect = delegate.text_hit_rect(option, index)
 
-            assert info_rect.isValid()
+            assert text_rect.isValid()
 
-            tooltip = tree.tooltip_for_pos(info_rect.center())
+            tooltip = tree.tooltip_for_pos(text_rect.center())
             assert "File Information" in tooltip
             assert "sample.bin" in tooltip
             assert file_path in tooltip

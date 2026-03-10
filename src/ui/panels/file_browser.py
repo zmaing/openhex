@@ -9,7 +9,7 @@ import html
 import os
 
 from PyQt6.QtCore import QEvent, QModelIndex, QRect, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import QIcon, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -156,14 +156,10 @@ class FileItem(QStandardItem):
 
 
 class FileTreeDelegate(QStyledItemDelegate):
-    """Draw an info icon immediately after the file name."""
-
-    _ICON_SIZE = 12
-    _ICON_MARGIN_LEFT = 6
-    _ICON_MARGIN_RIGHT = 8
+    """Elide long file names while keeping hover detection on the text itself."""
 
     def paint(self, painter, option, index):
-        """Paint the row with a trailing info icon."""
+        """Paint the row using a middle-elided file name."""
         item = self._get_item(index)
         if item is None:
             super().paint(painter, option, index)
@@ -173,26 +169,16 @@ class FileTreeDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
 
         text_rect = self._text_rect(opt)
-        available_width = max(
-            0,
-            text_rect.width() - self._ICON_SIZE - self._ICON_MARGIN_LEFT - self._ICON_MARGIN_RIGHT,
-        )
         opt.text = opt.fontMetrics.elidedText(
             opt.text,
             Qt.TextElideMode.ElideMiddle,
-            available_width,
+            max(0, text_rect.width()),
         )
 
         super().paint(painter, opt, index)
 
-        info_rect = self.info_icon_rect(opt, index)
-        if not info_rect.isValid():
-            return
-
-        self._paint_info_icon(painter, info_rect, opt)
-
-    def info_icon_rect(self, option, index) -> QRect:
-        """Return the info icon rectangle for the given index."""
+    def text_hit_rect(self, option, index) -> QRect:
+        """Return the hover-sensitive rectangle for the displayed file name."""
         item = self._get_item(index)
         if item is None:
             return QRect()
@@ -201,23 +187,16 @@ class FileTreeDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
 
         text_rect = self._text_rect(opt)
-        available_width = max(
-            0,
-            text_rect.width() - self._ICON_SIZE - self._ICON_MARGIN_LEFT - self._ICON_MARGIN_RIGHT,
-        )
         display_text = opt.fontMetrics.elidedText(
             opt.text,
             Qt.TextElideMode.ElideMiddle,
-            available_width,
+            max(0, text_rect.width()),
         )
+        if not display_text:
+            return QRect()
+
         display_width = opt.fontMetrics.horizontalAdvance(display_text)
-
-        max_x = opt.rect.right() - self._ICON_SIZE - self._ICON_MARGIN_RIGHT
-        icon_x = min(text_rect.left() + display_width + self._ICON_MARGIN_LEFT, max_x)
-        icon_x = max(icon_x, text_rect.left())
-        icon_y = opt.rect.top() + (opt.rect.height() - self._ICON_SIZE) // 2
-
-        return QRect(icon_x, icon_y, self._ICON_SIZE, self._ICON_SIZE)
+        return self._text_hit_rect(text_rect, display_width)
 
     def _get_item(self, index) -> FileItem | None:
         """Resolve the file item for the index."""
@@ -237,39 +216,27 @@ class FileTreeDelegate(QStyledItemDelegate):
         style = widget.style() if widget is not None else self.parent().style()
         return style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, widget)
 
-    def _paint_info_icon(self, painter, rect: QRect, option: QStyleOptionViewItem):
-        """Paint a compact circled info icon."""
-        if option.state & QStyle.StateFlag.State_Selected:
-            color = QColor("#ffffff")
-        elif option.state & QStyle.StateFlag.State_MouseOver:
-            color = QColor("#9CDCFE")
-        else:
-            color = QColor("#858585")
-
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(color)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
-
-        font = painter.font()
-        font.setBold(True)
-        font.setPointSize(max(font.pointSize() - 1, 7))
-        painter.setFont(font)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "i")
-        painter.restore()
+    @classmethod
+    def _text_hit_rect(cls, text_rect: QRect, display_width: int) -> QRect:
+        """Clamp the interactive text area to the actually drawn label width."""
+        return QRect(
+            text_rect.left(),
+            text_rect.top(),
+            max(0, min(text_rect.width(), display_width)),
+            text_rect.height(),
+        )
 
 
 class FileTreeView(QTreeView):
-    """Tree view with icon-only hover tooltips."""
+    """Tree view with tooltips shown when hovering file names."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
 
     def tooltip_for_pos(self, pos) -> str:
-        """Return the tooltip text if the mouse is over an info icon."""
-        index, rect = self._info_hit_test(pos)
+        """Return the tooltip text if the mouse is over a file name."""
+        index, rect = self._text_hit_test(pos)
         if not index.isValid() or not rect.contains(pos):
             return ""
 
@@ -283,22 +250,8 @@ class FileTreeView(QTreeView):
 
         return item.build_info_tooltip()
 
-    def mouseMoveEvent(self, event):
-        """Update cursor only when hovering the info icon."""
-        cursor_shape = Qt.CursorShape.ArrowCursor
-        _, rect = self._info_hit_test(event.position().toPoint())
-        if rect.isValid() and rect.contains(event.position().toPoint()):
-            cursor_shape = Qt.CursorShape.PointingHandCursor
-        self.viewport().setCursor(cursor_shape)
-        super().mouseMoveEvent(event)
-
-    def leaveEvent(self, event):
-        """Restore the default cursor when leaving the tree."""
-        self.viewport().unsetCursor()
-        super().leaveEvent(event)
-
     def viewportEvent(self, event):
-        """Show tooltip only for the info icon hit area."""
+        """Show tooltip only for the file name hit area."""
         if event.type() == QEvent.Type.ToolTip:
             tooltip = self.tooltip_for_pos(event.pos())
             if tooltip:
@@ -311,21 +264,21 @@ class FileTreeView(QTreeView):
 
         return super().viewportEvent(event)
 
-    def _info_hit_test(self, pos):
-        """Resolve the item index and icon rect for a viewport position."""
+    def _text_hit_test(self, pos):
+        """Resolve the item index and text rect for a viewport position."""
         index = self.indexAt(pos)
         if not index.isValid():
             return QModelIndex(), QRect()
 
         delegate = self.itemDelegateForIndex(index)
-        if not hasattr(delegate, "info_icon_rect"):
+        if not hasattr(delegate, "text_hit_rect"):
             return QModelIndex(), QRect()
 
         option = QStyleOptionViewItem()
         self.initViewItemOption(option)
         option.rect = self.visualRect(index)
 
-        return index, delegate.info_icon_rect(option, index)
+        return index, delegate.text_hit_rect(option, index)
 
 
 class FileTreeModel(QStandardItemModel):
@@ -336,7 +289,7 @@ class FileTreeModel(QStandardItemModel):
         self._root_path = ""
         self._show_hidden = False
 
-        # Single tree column; the trailing info icon is painted by a delegate.
+        # Single tree column; long names are middle-elided by a delegate.
         self.setColumnCount(1)
 
     def set_root_path(self, path: str):

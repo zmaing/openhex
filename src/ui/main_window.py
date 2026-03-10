@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QS
                              QTextEdit, QToolButton, QButtonGroup)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QSettings, QTimer
 from typing import List
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 import os
 import hashlib
@@ -24,6 +24,12 @@ from ..utils.logger import logger
 from ..utils.format import FormatUtils
 from ..utils.i18n import tr
 from ..ai import AIManager
+from .panels.data_value import DataValuePanel
+
+
+def _requires_save_as(doc: FileHandle | None) -> bool:
+    """Return whether the document must prompt for a destination path."""
+    return bool(doc) and not bool(getattr(doc, "file_path", None))
 
 
 class HexEditorMainWindow(QWidget):
@@ -337,24 +343,37 @@ class HexEditorMainWindow(QWidget):
 
         self._panel_tabs = QTabWidget()
         self._panel_tabs.setDocumentMode(True)
+        self._panel_tabs.tabBar().setDrawBase(False)
+        self._panel_tabs.tabBar().setExpanding(False)
         self._panel_tabs.currentChanged.connect(self._on_side_panel_tab_changed)
         self._panel_tabs.setStyleSheet("""
+            QTabWidget {
+                background-color: #252526;
+            }
             QTabWidget::pane {
                 background-color: #252526;
                 border: none;
+                margin-top: 0px;
+            }
+            QTabBar {
+                background-color: transparent;
             }
             QTabBar::tab {
-                background-color: #2d2d2d;
-                color: #cccccc;
-                padding: 6px 12px;
+                background-color: transparent;
+                color: #a6a6a6;
+                padding: 8px 14px 7px;
+                margin: 0 6px 0 0;
                 border: none;
+                border-bottom: 2px solid transparent;
+                font-weight: 600;
             }
             QTabBar::tab:selected {
-                background-color: #252526;
                 color: #ffffff;
+                border-bottom-color: #0e639c;
             }
             QTabBar::tab:hover:!selected {
-                background-color: #3c3c3c;
+                background-color: #2d2d30;
+                color: #ffffff;
             }
         """)
 
@@ -513,9 +532,35 @@ class HexEditorMainWindow(QWidget):
         """Ensure moved panel widgets become visible again after layout changes."""
         for panel_id in panel_ids:
             widget = self._side_panels[panel_id]
+            widget.updateGeometry()
+
+        if self._panel_layout_mode == "tabs" and len(panel_ids) > 1:
+            active_panel_id = (
+                self._active_panel_id if self._active_panel_id in panel_ids else panel_ids[0]
+            )
+            for panel_id in panel_ids:
+                self._side_panels[panel_id].setVisible(panel_id == active_panel_id)
+            return
+
+        for panel_id in panel_ids:
+            widget = self._side_panels[panel_id]
             widget.setVisible(True)
             widget.show()
-            widget.updateGeometry()
+
+    def _sync_tab_panel_visibility(self):
+        """Keep only the active tab page visible when using tab layout."""
+        if self._panel_layout_mode != "tabs":
+            return
+
+        active_panel_ids = self._get_active_panel_ids()
+        if len(active_panel_ids) <= 1:
+            return
+
+        active_panel_id = (
+            self._active_panel_id if self._active_panel_id in active_panel_ids else active_panel_ids[0]
+        )
+        for panel_id in active_panel_ids:
+            self._side_panels[panel_id].setVisible(panel_id == active_panel_id)
 
     def _ensure_right_panel_width(self, minimum_width: int):
         """Expand the right panel when the active layout needs more space."""
@@ -752,6 +797,7 @@ class HexEditorMainWindow(QWidget):
         for panel_id, panel_widget in self._side_panels.items():
             if widget is panel_widget:
                 self._active_panel_id = panel_id
+                self._sync_tab_panel_visibility()
                 self._save_side_panel_settings()
                 break
 
@@ -799,60 +845,7 @@ class HexEditorMainWindow(QWidget):
 
     def _create_data_value_panel(self):
         """Create data value inspection panel."""
-        panel = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        # Title
-        title = QLabel("Data Inspector")
-        title.setStyleSheet("font-weight: bold; color: #cccccc;")
-        layout.addWidget(title)
-
-        # Offset display
-        self._value_offset = QLabel("0x00000000")
-        self._value_offset.setFont(QFont("Monospace", 11))
-        layout.addWidget(QLabel("Offset:"))
-        layout.addWidget(self._value_offset)
-
-        # Hex value
-        self._value_hex = QLabel("00")
-        self._value_hex.setFont(QFont("Monospace", 11))
-        layout.addWidget(QLabel("Hex:"))
-        layout.addWidget(self._value_hex)
-
-        # Decimal values
-        self._value_dec_signed = QLabel("0")
-        self._value_dec_signed.setFont(QFont("Monospace", 11))
-        layout.addWidget(QLabel("Signed:"))
-        layout.addWidget(self._value_dec_signed)
-
-        self._value_dec_unsigned = QLabel("0")
-        self._value_dec_unsigned.setFont(QFont("Monospace", 11))
-        layout.addWidget(QLabel("Unsigned:"))
-        layout.addWidget(self._value_dec_unsigned)
-
-        # Binary
-        self._value_bin = QLabel("00000000")
-        self._value_bin.setFont(QFont("Monospace", 10))
-        layout.addWidget(QLabel("Binary:"))
-        layout.addWidget(self._value_bin)
-
-        # ASCII
-        self._value_ascii = QLabel(".")
-        self._value_ascii.setFont(QFont("Monospace", 11))
-        layout.addWidget(QLabel("ASCII:"))
-        layout.addWidget(self._value_ascii)
-
-        # Octal
-        self._value_octal = QLabel("0o00")
-        self._value_octal.setFont(QFont("Monospace", 11))
-        layout.addWidget(QLabel("Octal:"))
-        layout.addWidget(self._value_octal)
-
-        layout.addStretch()
-        panel.setLayout(layout)
-        return panel
+        return DataValuePanel(self)
 
     def _create_ai_panel(self):
         """Create AI analysis panel."""
@@ -945,13 +938,8 @@ class HexEditorMainWindow(QWidget):
 
     def _reset_value_panel(self):
         """Clear the Value panel when no byte is available."""
-        self._value_offset.setText("0x00000000")
-        self._value_hex.setText("00")
-        self._value_dec_signed.setText("0")
-        self._value_dec_unsigned.setText("0")
-        self._value_bin.setText("00000000")
-        self._value_ascii.setText(".")
-        self._value_octal.setText("0o000")
+        if hasattr(self, "_data_value"):
+            self._data_value.clear_values()
 
     def _update_value_panel(self, offset: int):
         """Update the Value panel for the active document and byte offset."""
@@ -960,22 +948,12 @@ class HexEditorMainWindow(QWidget):
             self._reset_value_panel()
             return
 
-        data = doc.read(offset, 1)
+        data = doc.read(offset, DataValuePanel.MAX_BYTES)
         if not data:
             self._reset_value_panel()
             return
 
-        byte = data[0]
-        signed = byte - 256 if byte > 127 else byte
-        ascii_value = chr(byte) if 32 <= byte < 127 else "."
-
-        self._value_offset.setText(f"0x{offset:08X}")
-        self._value_hex.setText(f"{byte:02X}")
-        self._value_dec_signed.setText(str(signed))
-        self._value_dec_unsigned.setText(str(byte))
-        self._value_bin.setText(f"{byte:08b}")
-        self._value_ascii.setText(ascii_value)
-        self._value_octal.setText(f"0o{byte:03o}")
+        self._data_value.update_values(offset, data)
 
     def _refresh_current_view_state(self):
         """Refresh status labels and value panel from the active editor."""
@@ -1080,8 +1058,8 @@ class HexEditorMainWindow(QWidget):
             self._status_bar.showMessage("No file to save")
             return
 
-        if doc.file_state.name == "NEW":
-            # New file needs Save As
+        if _requires_save_as(doc):
+            # Unsaved documents must choose a destination first.
             self.save_file_as()
             return
 
@@ -1106,6 +1084,8 @@ class HexEditorMainWindow(QWidget):
                 doc = self._document_model.current_document
                 if doc:
                     self._update_tab_name(self._tab_widget.currentIndex(), doc)
+                    if doc.file_path:
+                        self.file_saved.emit(doc.file_path)
                 self._show_save_success_message()
 
     def _show_save_success_message(self):
