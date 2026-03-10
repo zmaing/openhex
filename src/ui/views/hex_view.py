@@ -256,11 +256,7 @@ class HexTableModel(QAbstractTableModel):
                 if offset + header_len > self._file_size:
                     break
                 # 读取头部的长度值
-                header_bytes = self._data[offset:offset + header_len]
-                try:
-                    data_len = int.from_bytes(header_bytes, byteorder='big')
-                except:
-                    data_len = 0
+                data_len = self._get_header_data_length(offset)
                 # 如果 data_len 为 0，跳到下一行（添加一个默认长度）
                 if data_len == 0:
                     data_len = 1
@@ -286,11 +282,7 @@ class HexTableModel(QAbstractTableModel):
             if row_offset + header_len > self._file_size:
                 row_end_offset = self._file_size
             else:
-                header_bytes = self._data[row_offset:row_offset + header_len]
-                try:
-                    data_len = int.from_bytes(header_bytes, byteorder='big')
-                except:
-                    data_len = 0
+                data_len = self._get_header_data_length(row_offset)
                 if data_len == 0:
                     data_len = 1
                 row_end_offset = min(row_offset + header_len + data_len, self._file_size)
@@ -320,17 +312,46 @@ class HexTableModel(QAbstractTableModel):
                 return self._file_size
             if offset + header_len > self._file_size:
                 return offset
-            header_bytes = self._data[offset:offset + header_len]
-            try:
-                data_len = int.from_bytes(header_bytes, byteorder='big')
-            except:
-                data_len = 0
+            data_len = self._get_header_data_length(offset)
             # 如果 data_len 为 0，跳到下一行（添加一个默认长度）
             if data_len == 0:
                 data_len = 1
             offset += header_len + data_len
 
         return offset
+
+    def _parse_header_data_length(self, header_bytes: bytes, available_data: int) -> int:
+        """Parse a header length, preferring the byte order that fits the remaining file."""
+        if not header_bytes:
+            return 0
+
+        available_data = max(0, int(available_data))
+        big_endian = int.from_bytes(header_bytes, byteorder='big')
+        little_endian = int.from_bytes(header_bytes, byteorder='little')
+        big_fits = big_endian <= available_data
+        little_fits = little_endian <= available_data
+
+        if big_fits and not little_fits:
+            return big_endian
+        if little_fits and not big_fits:
+            return little_endian
+        if big_fits:
+            return big_endian
+        if little_fits:
+            return little_endian
+
+        non_zero = [value for value in (little_endian, big_endian) if value > 0]
+        return min(non_zero) if non_zero else 0
+
+    def _get_header_data_length(self, row_offset: int) -> int:
+        """Return parsed data length for the row header at the given offset."""
+        header_len = self._header_length
+        if header_len <= 0 or row_offset < 0 or row_offset + header_len > self._file_size:
+            return 0
+
+        header_bytes = self._data[row_offset:row_offset + header_len]
+        available_data = self._file_size - (row_offset + header_len)
+        return self._parse_header_data_length(header_bytes, available_data)
 
     def set_visible_byte_window(self, start: int, count: int):
         """Set the shared horizontal byte window for both hex and ASCII columns."""
@@ -931,11 +952,7 @@ class HexViewDelegate(QAbstractItemDelegate):
                 row_offset = model._get_row_offset(row)
                 data_start = row_offset + header_length
                 if row_offset < file_size:
-                    header_bytes = model._data[row_offset:row_offset + header_length]
-                    try:
-                        data_len = int.from_bytes(header_bytes, byteorder='big')
-                    except:
-                        data_len = 1
+                    data_len = model._get_header_data_length(row_offset)
                     if data_len == 0:
                         data_len = 1
                     data_end = data_start + data_len
@@ -1051,11 +1068,7 @@ class HexViewDelegate(QAbstractItemDelegate):
                 row_offset = model._get_row_offset(row)
                 data_start = row_offset + header_length
                 if row_offset < file_size:
-                    header_bytes = model._data[row_offset:row_offset + header_length]
-                    try:
-                        data_len = int.from_bytes(header_bytes, byteorder='big')
-                    except:
-                        data_len = 1
+                    data_len = model._get_header_data_length(row_offset)
                     if data_len == 0:
                         data_len = 1
                     data_end = data_start + data_len
