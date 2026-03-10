@@ -1,5 +1,5 @@
 """
-Clipboard Manager for HexForge.
+Clipboard Manager for openhex.
 
 Handles clipboard operations for hex data.
 """

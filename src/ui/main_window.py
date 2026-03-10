@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QS
                              QTextEdit, QToolButton, QButtonGroup)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QSettings, QTimer
 from typing import List
+from pathlib import Path
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 import os
@@ -25,6 +26,10 @@ from ..utils.format import FormatUtils
 from ..utils.i18n import tr
 from ..ai import AIManager
 from .panels.data_value import DataValuePanel
+
+
+DEBUG_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "debug.log"
+DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _requires_save_as(doc: FileHandle | None) -> bool:
@@ -101,7 +106,7 @@ class HexEditorMainWindow(QWidget):
             candidate = settings()
             if isinstance(candidate, QSettings):
                 return candidate
-        return QSettings("HexForge", "HexForge")
+        return QSettings("openhex", "openhex")
 
     def _load_ai_settings(self):
         """Load AI settings from app settings."""
@@ -1484,16 +1489,13 @@ class HexEditorMainWindow(QWidget):
 
     def _on_find_next(self, pattern: str, mode: object):
         """Handle find next."""
-        import os
-        log_path = "/Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge/logs/debug.log"
-
-        with open(log_path, "a") as f:
+        with open(DEBUG_LOG_PATH, "a") as f:
             f.write(f"[MAIN] _on_find_next: pattern='{pattern}', mode='{mode}', type={type(mode)}\n")
             f.write(f"[MAIN] last: pattern='{self._last_search_pattern}', mode={self._last_search_mode}\n")
 
         doc = self._document_model.current_document
         if not doc:
-            with open(log_path, "a") as f:
+            with open(DEBUG_LOG_PATH, "a") as f:
                 f.write("[MAIN] No document\n")
             return
 
@@ -1575,18 +1577,15 @@ class HexEditorMainWindow(QWidget):
 
     def _go_to_result(self, index: int):
         """Go to search result at index."""
-        import os
-        log_path = "/Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge/logs/debug.log"
-
         if 0 <= index < len(self._search_results):
             result = self._search_results[index]
             self._current_result_index = index
-            with open(log_path, "a") as f:
+            with open(DEBUG_LOG_PATH, "a") as f:
                 f.write(f"[INFO] _go_to_result: offset={result.offset}, index={index}/{len(self._search_results)}\n")
 
             # Scroll to offset
             current_widget = self._tab_widget.currentWidget()
-            with open(log_path, "a") as f:
+            with open(DEBUG_LOG_PATH, "a") as f:
                 f.write(f"[INFO] current_widget: {current_widget}, type: {type(current_widget)}\n")
 
             if hasattr(current_widget, 'hex_view'):

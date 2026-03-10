@@ -10,11 +10,16 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QTabWidget, QTextEdit, QProgressBar)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QTextOption
+from pathlib import Path
 
 import re
 
 # Import i18n
 from ...utils.i18n import tr as _tr
+
+
+DEBUG_LOG_PATH = Path(__file__).resolve().parents[3] / "logs" / "debug.log"
+DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 class FindReplaceDialog(QDialog):
@@ -246,7 +251,7 @@ class FindReplaceDialog(QDialog):
             return
 
         mode = self._get_search_mode()
-        with open("/Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge/logs/debug.log", "a") as f:
+        with open(DEBUG_LOG_PATH, "a") as f:
             f.write(f"[DEBUG] find_next: pattern='{pattern}', mode={mode}\n")
         self.find_next.emit(pattern, mode)
 

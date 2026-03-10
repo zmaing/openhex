@@ -12,13 +12,13 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QFont, QFontMetrics
 
-from src.app import HexForgeApp
+from src.app import OpenHexApp
 from src.ui.views.hex_view import HexViewWidget
 
 
 def test_split_view_keeps_hex_and_ascii_visible_together():
     """Hex data and ASCII should share the viewport instead of pushing ASCII off-screen."""
-    HexForgeApp.instance()
+    OpenHexApp.instance()
 
     widget = HexViewWidget()
     widget.resize(1200, 320)
@@ -44,7 +44,7 @@ def test_split_view_keeps_hex_and_ascii_visible_together():
 
 def test_offset_ruler_is_visible_and_starts_from_zero():
     """The ruler above the data should be visible and count offsets from 0."""
-    HexForgeApp.instance()
+    OpenHexApp.instance()
 
     widget = HexViewWidget()
     widget.resize(1200, 320)
@@ -67,7 +67,7 @@ def test_offset_ruler_is_visible_and_starts_from_zero():
 
 def test_offset_ruler_has_tick_for_last_visible_byte():
     """The ruler should provide a tick for every visible byte, not only the 10-byte labels."""
-    HexForgeApp.instance()
+    OpenHexApp.instance()
 
     widget = HexViewWidget()
     widget.resize(1800, 320)
@@ -90,7 +90,7 @@ def test_offset_ruler_has_tick_for_last_visible_byte():
 
 def test_offset_ruler_ticks_align_to_left_edge_of_data_cells():
     """Byte ticks should align to the left edge of each visible data cell."""
-    HexForgeApp.instance()
+    OpenHexApp.instance()
 
     widget = HexViewWidget()
     widget.resize(1800, 320)
@@ -122,7 +122,7 @@ def test_offset_ruler_ticks_align_to_left_edge_of_data_cells():
 
 def test_offset_ruler_labels_only_decade_ticks():
     """The ruler should label only every 10th byte."""
-    HexForgeApp.instance()
+    OpenHexApp.instance()
 
     widget = HexViewWidget()
     widget.resize(900, 320)
@@ -148,7 +148,7 @@ def test_offset_ruler_labels_only_decade_ticks():
 
 def test_horizontal_scrollbar_moves_shared_byte_window():
     """Long rows should scroll hex and ASCII together via one shared scrollbar."""
-    HexForgeApp.instance()
+    OpenHexApp.instance()
 
     widget = HexViewWidget()
     widget.resize(640, 320)
@@ -184,7 +184,7 @@ def test_horizontal_scrollbar_moves_shared_byte_window():
 
 def test_touchpad_horizontal_scroll_moves_shared_byte_window():
     """Horizontal wheel gestures should move the shared byte window even without dragging the scrollbar."""
-    HexForgeApp.instance()
+    OpenHexApp.instance()
 
     class FakeWheelEvent:
         def __init__(self, x_delta: int):
@@ -230,7 +230,7 @@ def test_touchpad_horizontal_scroll_moves_shared_byte_window():
 
 def test_offset_ruler_updates_with_horizontal_scroll():
     """The ruler should move with the shared horizontal byte window."""
-    HexForgeApp.instance()
+    OpenHexApp.instance()
 
     widget = HexViewWidget()
     widget.resize(640, 320)

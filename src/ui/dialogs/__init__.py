@@ -1,7 +1,7 @@
 """
 Dialogs Package
 
-Dialog components for HexForge.
+Dialog components for openhex.
 """
 
 from .find_replace import FindReplaceDialog

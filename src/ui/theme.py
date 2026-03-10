@@ -1,7 +1,7 @@
 """
 Theme
 
-Theme management for HexForge.
+Theme management for openhex.
 """
 
 from PyQt6.QtCore import QObject

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HexForge Automated Test Script - Quick Version
+openhex Automated Test Script - Quick Version
 """
 
 import sys
@@ -17,9 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtTest import QTest
 
-# Import HexForge modules
-from src.app import HexForgeApp
-from src.main import HexForgeMainWindow
+# Import openhex modules
+from src.app import OpenHexApp
+from src.main import OpenHexMainWindow
 
 
 def log(status, message):
@@ -32,7 +32,7 @@ def log(status, message):
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("HexForge Quick Test")
+    print("openhex Quick Test")
     print("=" * 60)
 
     passed = 0
@@ -42,7 +42,7 @@ def main():
         # Setup
         print("\n[1] Setting up application...")
         app = QApplication.instance() or QApplication(sys.argv)
-        window = HexForgeMainWindow()
+        window = OpenHexMainWindow()
         window.show()
         QTest.qWait(100)
         print("    Setup complete.")

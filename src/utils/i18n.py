@@ -1,5 +1,5 @@
 """
-Internationalization (i18n) module for HexForge.
+Internationalization (i18n) module for openhex.
 
 Supports Chinese (zh) and English (en) languages.
 """

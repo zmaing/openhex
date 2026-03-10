@@ -1,5 +1,5 @@
 """
-HexForge Application
+openhex Application
 
 QApplication singleton management and global application state.
 """
@@ -15,14 +15,14 @@ from .utils.logger import logger
 from .utils.i18n import set_language
 
 
-class HexForgeApp(QApplication):
-    """HexForge Application singleton."""
+class OpenHexApp(QApplication):
+    """openhex Application singleton."""
 
     _instance = None
 
     def __init__(self, argv):
         super().__init__(argv)
-        HexForgeApp._instance = self
+        OpenHexApp._instance = self
         self._init_application()
 
     @classmethod
@@ -35,10 +35,10 @@ class HexForgeApp(QApplication):
     def _init_application(self):
         """Initialize application settings and appearance."""
         # Application metadata
-        self.setApplicationName("HexForge")
+        self.setApplicationName("openhex")
         self.setApplicationVersion("1.0.0")
-        self.setOrganizationName("HexForge")
-        self.setOrganizationDomain("hexforge.io")
+        self.setOrganizationName("openhex")
+        self.setOrganizationDomain("openhex.io")
 
         # High DPI support - check if attribute exists
         if hasattr(Qt.ApplicationAttribute, 'AA_EnableHighDpiScaling'):
@@ -47,7 +47,7 @@ class HexForgeApp(QApplication):
             self.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
 
         # Load settings
-        self._settings = QSettings("HexForge", "HexForge")
+        self._settings = QSettings("openhex", "openhex")
 
         # Load language setting
         self._load_language()
@@ -58,7 +58,7 @@ class HexForgeApp(QApplication):
         # Set application palette
         self._set_default_palette()
 
-        logger.info("HexForge application initialized")
+        logger.info("openhex application initialized")
 
     def _set_default_font(self):
         """Set default font for the application."""

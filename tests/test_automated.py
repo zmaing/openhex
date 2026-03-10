@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-HexForge Automated Test Script
+openhex Automated Test Script
 
-Tests basic functionality of the HexForge application.
+Tests basic functionality of the openhex application.
 """
 
 import sys
@@ -20,13 +20,13 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QTest
 
-# Import HexForge modules
-from src.app import HexForgeApp
-from src.main import HexForgeMainWindow
+# Import openhex modules
+from src.app import OpenHexApp
+from src.main import OpenHexMainWindow
 
 
-class HexForgeTester:
-    """Automated tester for HexForge."""
+class OpenHexTester:
+    """Automated tester for openhex."""
 
     def __init__(self):
         self.app = None
@@ -42,9 +42,9 @@ class HexForgeTester:
 
     def setup(self):
         """Set up the application."""
-        print("Setting up HexForge...")
-        self.app = HexForgeApp.instance()
-        self.window = HexForgeMainWindow()
+        print("Setting up openhex...")
+        self.app = OpenHexApp.instance()
+        self.window = OpenHexMainWindow()
         self.window.show()
         QTest.qWait(100)
         print("Setup complete.\n")
@@ -153,7 +153,7 @@ class HexForgeTester:
 
         # Create test file with content
         with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.bin') as f:
-            f.write(b'Hello World! Hello HexForge!')
+            f.write(b'Hello World! Hello openhex!')
             self.test_file = f.name
 
         try:
@@ -252,7 +252,7 @@ class HexForgeTester:
     def run_all_tests(self):
         """Run all tests."""
         print("=" * 60)
-        print("HexForge Automated Test Suite")
+        print("openhex Automated Test Suite")
         print("=" * 60)
 
         self.setup()
@@ -289,7 +289,7 @@ class HexForgeTester:
 
 def main():
     """Main entry point."""
-    tester = HexForgeTester()
+    tester = OpenHexTester()
     success = tester.run_all_tests()
     sys.exit(0 if success else 1)
 

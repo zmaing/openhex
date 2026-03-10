@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# HexForge macOS App Build Script
-# This script builds HexForge as a standalone macOS application
+# openhex macOS App Build Script
+# This script builds openhex as a standalone macOS application
 
 set -e
 
@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "======================================"
-echo "HexForge Build Script"
+echo "openhex Build Script"
 echo "======================================"
 
 # Check Python version
@@ -31,13 +31,13 @@ echo ""
 echo "Building application..."
 
 # Create spec file content
-cat > hex_forge.spec << 'EOF'
+cat > openhex.spec << 'EOF'
 # -*- mode: python ; coding: utf-8 -*-
 
 block_cipher = None
 
 a = Analysis(
-    ['hex_forge.py'],
+    ['openhex.py'],
     pathex=['.'],
     binaries=[],
     datas=[('config', 'config'), ('src/utils', 'src/utils')],
@@ -61,7 +61,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='HexForge',
+    name='openhex',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -85,21 +85,21 @@ mkdir -p resources
 if [ -f "requirements.txt" ]; then
     echo "Using PyInstaller to build..."
     pip install -q pyinstaller
-    pyinstaller --onefile --windowed --name HexForge --osx-bundle-identifier io.hexforge.app hex_forge.py
+    pyinstaller --onefile --windowed --name openhex --osx-bundle-identifier io.openhex.app openhex.py
 fi
 
 echo ""
 echo "Build complete!"
-echo "Output: dist/HexForge.app"
+echo "Output: dist/openhex.app"
 
 # Create DMG if requested
 if [ "$1" == "--dmg" ]; then
     echo ""
     echo "Creating DMG..."
-    hdiutil create -volname 'HexForge' \
-        -srcfolder dist/HexForge.app \
-        -ov -format UDZO dist/HexForge.dmg
-    echo "DMG created: dist/HexForge.dmg"
+    hdiutil create -volname 'openhex' \
+        -srcfolder dist/openhex.app \
+        -ov -format UDZO dist/openhex.dmg
+    echo "DMG created: dist/openhex.dmg"
 fi
 
 echo ""

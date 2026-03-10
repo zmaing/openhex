@@ -1,5 +1,5 @@
 """
-HexForge Main Window
+openhex Main Window
 
 Main application window with menu bar, toolbar, and central widget.
 """
@@ -16,8 +16,8 @@ from .core.data_model import ArrangementMode
 from .utils.i18n import tr
 
 
-class HexForgeMainWindow(QMainWindow):
-    """Main window for HexForge application."""
+class OpenHexMainWindow(QMainWindow):
+    """Main window for openhex application."""
 
     def __init__(self):
         super().__init__()
@@ -29,7 +29,7 @@ class HexForgeMainWindow(QMainWindow):
 
     def _init_window(self):
         """Initialize window properties."""
-        self.setWindowTitle("HexForge - AI Enhanced Binary Editor")
+        self.setWindowTitle("openhex - AI Enhanced Binary Editor")
         self.resize(1200, 800)
         self.setMinimumSize(800, 600)
 
@@ -413,7 +413,7 @@ class HexForgeMainWindow(QMainWindow):
         help_menu = menubar.addMenu("&Help")
 
         about_action = QAction("&About", self)
-        about_action.setStatusTip("About HexForge")
+        about_action.setStatusTip("About openhex")
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
 
@@ -805,7 +805,7 @@ class HexForgeMainWindow(QMainWindow):
         set_language(lang)
 
         # Save to settings - use QSettings directly
-        s = QSettings("HexForge", "HexForge")
+        s = QSettings("openhex", "openhex")
         s.setValue("language", lang)
         s.sync()
 
@@ -839,8 +839,8 @@ class HexForgeMainWindow(QMainWindow):
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.about(
             self,
-            "About HexForge",
-            "<h1>HexForge</h1>"
+            "About openhex",
+            "<h1>openhex</h1>"
             "<p>Version 1.0.0</p>"
             "<p>AI Enhanced Binary Editor</p>"
             "<p>Built with PyQt6</p>"

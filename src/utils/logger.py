@@ -22,12 +22,12 @@ class LogLevel(Enum):
 
 class Logger:
     """
-    Simple logger for HexForge.
+    Simple logger for openhex.
     """
 
     _instance: Optional['Logger'] = None
 
-    def __init__(self, name: str = "HexForge", level: LogLevel = LogLevel.INFO):
+    def __init__(self, name: str = "openhex", level: LogLevel = LogLevel.INFO):
         Logger._instance = self
         self._name = name
         self._level = level
@@ -97,7 +97,7 @@ class Logger:
         self.error(f"{message}: {exception}")
         self.debug(traceback.format_exc())
 
-    def start_file_log(self, filename: str = "hexforge.log"):
+    def start_file_log(self, filename: str = "openhex.log"):
         """Start logging to file."""
         logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs")
         path = os.path.join(logs_dir, filename)

@@ -1,7 +1,7 @@
 """
 Models Package
 
-Data models for HexForge including file handling, documents, selection, cursor, and undo stack.
+Data models for openhex including file handling, documents, selection, cursor, and undo stack.
 """
 
 from .file_handle import FileHandle

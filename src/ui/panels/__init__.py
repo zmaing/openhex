@@ -1,7 +1,7 @@
 """
 Panels Package
 
-Panel components for HexForge.
+Panel components for openhex.
 """
 
 from .file_browser import FileBrowser

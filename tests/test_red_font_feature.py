@@ -25,9 +25,9 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtTest import QTest
 from PyQt6.QtGui import QColor
 
-# Import HexForge modules
-from src.app import HexForgeApp
-from src.main import HexForgeMainWindow
+# Import openhex modules
+from src.app import OpenHexApp
+from src.main import OpenHexMainWindow
 from src.models.file_handle import FileHandle, FileState
 
 
@@ -78,7 +78,7 @@ def test_hex_view_red_color():
     print("=" * 60)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -133,7 +133,7 @@ def test_save_clears_red_color():
     print("=" * 60)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -179,7 +179,7 @@ def test_different_display_modes():
     print("=" * 60)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -221,7 +221,7 @@ def test_undo_redo_behavior():
     print("=" * 60)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 

@@ -1,4 +1,4 @@
-# HexForge
+# openhex
 
 **AI Enhanced Binary Editor** (v0.1)
 
@@ -66,8 +66,8 @@ A powerful binary file editor built with PyQt6, featuring AI-powered analysis, p
 ## 项目架构
 
 ```
-hex_forge/
-├── hex_forge.py              # 应用程序入口点
+openhex/
+├── openhex.py              # 应用程序入口点
 ├── config/                   # 配置文件目录
 ├── src/
 │   ├── models/              # 数据模型
@@ -109,13 +109,13 @@ hex_forge/
 
 ```bash
 # 克隆仓库
-cd hex_forge
+cd openhex
 
 # 安装依赖
 pip install -r requirements.txt
 
 # 运行程序
-python3 hex_forge.py
+python3 openhex.py
 ```
 
 ## AI 配置
@@ -123,11 +123,11 @@ python3 hex_forge.py
 ### 本地 AI (Ollama)
 1. 安装 [Ollama](https://ollama.ai)
 2. 拉取模型：`ollama pull qwen:7b`
-3. 在 HexForge 设置中配置
+3. 在 openhex 设置中配置
 
 ### 云端 AI
 1. 获取 OpenAI 或 Anthropic API Key
-2. 在 HexForge AI 设置中配置
+2. 在 openhex AI 设置中配置
 
 ## 构建应用
 
