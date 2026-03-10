@@ -2408,6 +2408,43 @@ class HexView(QTableView):
         """Get file offset at current cursor position."""
         return max(0, getattr(self, "_cursor_byte_offset", 0))
 
+    def get_data_bounds_for_offset(self, offset: int | None = None) -> tuple[int, int]:
+        """Return the data-byte bounds for the row containing the given offset."""
+        model = getattr(self, "_model", None)
+        if model is None or getattr(model, "_file_size", 0) <= 0:
+            return (0, 0)
+
+        target_offset = self.get_offset_at_cursor() if offset is None else max(0, int(offset))
+        row_count = model.rowCount()
+        if row_count <= 0:
+            return (0, 0)
+
+        candidate_rows = []
+        current_index = self.currentIndex()
+        if current_index.isValid():
+            candidate_rows.append(current_index.row())
+
+        if getattr(model, "_arrangement_mode", "equal_frame") == "equal_frame":
+            bytes_per_row = max(1, getattr(model, "_bytes_per_row", 1))
+            candidate_rows.append(min(row_count - 1, target_offset // bytes_per_row))
+
+        for row in candidate_rows:
+            if row < 0 or row >= row_count:
+                continue
+            _row_start, _row_end, data_start, data_end = model._get_row_bounds(row)
+            if data_start <= target_offset < data_end:
+                return (data_start, data_end)
+
+        if getattr(model, "_arrangement_mode", "equal_frame") == "header_length":
+            for row in range(row_count):
+                _row_start, _row_end, data_start, data_end = model._get_row_bounds(row)
+                if data_start <= target_offset < data_end:
+                    return (data_start, data_end)
+
+        last_row = max(0, min(row_count - 1, candidate_rows[-1] if candidate_rows else 0))
+        _row_start, _row_end, data_start, data_end = model._get_row_bounds(last_row)
+        return (data_start, data_end)
+
     def scrollToOffset(self, offset: int):
         """Scroll to specific offset."""
         total_per_row = self._model._bytes_per_row + self._model._header_length

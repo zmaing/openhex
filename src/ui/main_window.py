@@ -26,6 +26,7 @@ from ..utils.format import FormatUtils
 from ..utils.i18n import tr
 from ..ai import AIManager
 from .panels.data_value import DataValuePanel
+from .panels.structure_view import StructureViewPanel
 
 
 DEBUG_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "debug.log"
@@ -48,7 +49,7 @@ class HexEditorMainWindow(QWidget):
     file_opened = pyqtSignal(str)
     file_saved = pyqtSignal(str)
     cursor_changed = pyqtSignal(int)
-    side_panel_state_changed = pyqtSignal(bool, bool, str)
+    side_panel_state_changed = pyqtSignal(bool, bool, bool, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -64,6 +65,7 @@ class HexEditorMainWindow(QWidget):
         self._panel_visibility = {
             "value": True,
             "ai": True,
+            "structure": False,
         }
         self._panel_layout_mode = "tabs"
         self._active_panel_id = "value"
@@ -133,6 +135,7 @@ class HexEditorMainWindow(QWidget):
         s = self._get_settings()
         self._panel_visibility["value"] = s.value("side_panel/value_visible", True, type=bool)
         self._panel_visibility["ai"] = s.value("side_panel/ai_visible", True, type=bool)
+        self._panel_visibility["structure"] = s.value("side_panel/structure_visible", False, type=bool)
         layout_mode = s.value("side_panel/layout_mode", "tabs", type=str)
         if layout_mode == "split":
             layout_mode = "vertical"
@@ -150,6 +153,7 @@ class HexEditorMainWindow(QWidget):
         s = self._get_settings()
         s.setValue("side_panel/value_visible", self._panel_visibility["value"])
         s.setValue("side_panel/ai_visible", self._panel_visibility["ai"])
+        s.setValue("side_panel/structure_visible", self._panel_visibility["structure"])
         s.setValue("side_panel/layout_mode", self._panel_layout_mode)
         s.setValue("side_panel/active_panel", self._active_panel_id)
 
@@ -387,9 +391,11 @@ class HexEditorMainWindow(QWidget):
 
         self._data_value = self._create_data_value_panel()
         self._ai_panel = self._create_ai_panel()
+        self._structure_panel = self._create_structure_panel()
         self._side_panels = {
             "value": self._data_value,
             "ai": self._ai_panel,
+            "structure": self._structure_panel,
         }
 
         layout.addWidget(self._right_panel_content)
@@ -499,11 +505,16 @@ class HexEditorMainWindow(QWidget):
         return {
             "value": tr("panel_value_tab"),
             "ai": tr("panel_ai_tab"),
+            "structure": tr("panel_structure_tab"),
         }.get(panel_id, panel_id.title())
 
     def _get_active_panel_ids(self) -> List[str]:
         """Return visible side panels in their display order."""
-        return [panel_id for panel_id in ("value", "ai") if self._panel_visibility.get(panel_id, False)]
+        return [
+            panel_id
+            for panel_id in ("value", "ai", "structure")
+            if self._panel_visibility.get(panel_id, False)
+        ]
 
     def _clear_layout(self, layout):
         """Detach all widgets from a layout."""
@@ -765,6 +776,7 @@ class HexEditorMainWindow(QWidget):
         self.side_panel_state_changed.emit(
             self._panel_visibility["ai"],
             self._panel_visibility["value"],
+            self._panel_visibility["structure"],
             self._panel_layout_mode,
         )
 
@@ -775,6 +787,10 @@ class HexEditorMainWindow(QWidget):
     def is_value_panel_visible(self) -> bool:
         """Return whether the Value panel is enabled in the side panel."""
         return self._panel_visibility["value"]
+
+    def is_structure_panel_visible(self) -> bool:
+        """Return whether the structure panel is enabled in the side panel."""
+        return self._panel_visibility["structure"]
 
     def side_panel_layout_mode(self) -> str:
         """Return the current side panel layout mode."""
@@ -851,6 +867,10 @@ class HexEditorMainWindow(QWidget):
     def _create_data_value_panel(self):
         """Create data value inspection panel."""
         return DataValuePanel(self)
+
+    def _create_structure_panel(self):
+        """Create structure parsing panel."""
+        return StructureViewPanel(self)
 
     def _create_ai_panel(self):
         """Create AI analysis panel."""
@@ -946,6 +966,11 @@ class HexEditorMainWindow(QWidget):
         if hasattr(self, "_data_value"):
             self._data_value.clear_values()
 
+    def _reset_structure_panel(self):
+        """Clear the structure panel when no row data is available."""
+        if hasattr(self, "_structure_panel"):
+            self._structure_panel.clear_values()
+
     def _update_value_panel(self, offset: int):
         """Update the Value panel for the active document and byte offset."""
         doc = self._document_model.current_document
@@ -960,6 +985,26 @@ class HexEditorMainWindow(QWidget):
 
         self._data_value.update_values(offset, data)
 
+    def _update_structure_panel(self, offset: int):
+        """Update the structure panel for the current cursor row."""
+        doc = self._document_model.current_document
+        hex_view = self._get_current_hex_view()
+        if not doc or not hex_view or offset < 0 or offset >= doc.file_size:
+            self._reset_structure_panel()
+            return
+
+        row_start, row_end = hex_view.get_data_bounds_for_offset(offset)
+        if row_end <= row_start:
+            self._reset_structure_panel()
+            return
+
+        data = doc.read(row_start, row_end - row_start)
+        if not data:
+            self._reset_structure_panel()
+            return
+
+        self._structure_panel.update_row_data(row_start, data)
+
     def _refresh_current_view_state(self):
         """Refresh status labels and value panel from the active editor."""
         hex_view = self._get_current_hex_view()
@@ -968,6 +1013,7 @@ class HexEditorMainWindow(QWidget):
             self._pos_label.setText(tr("status_offset", "0x00000000"))
             self._selection_label.setText(tr("status_selection", 0))
             self._reset_value_panel()
+            self._reset_structure_panel()
             return
 
         offset = hex_view.get_offset_at_cursor()
@@ -977,6 +1023,7 @@ class HexEditorMainWindow(QWidget):
         """Update side UI from the active cursor position."""
         self._pos_label.setText(tr("status_offset", f"0x{max(0, offset):08X}"))
         self._update_value_panel(offset)
+        self._update_structure_panel(offset)
         self.cursor_changed.emit(offset)
 
     def _on_selection_changed(self, start: int, end: int):
@@ -1666,6 +1713,10 @@ class HexEditorMainWindow(QWidget):
         """Toggle Value panel visibility inside the side panel container."""
         self.set_value_panel_visible(not self.is_value_panel_visible())
 
+    def toggle_structure_panel(self):
+        """Toggle structure panel visibility inside the side panel container."""
+        self.set_structure_panel_visible(not self.is_structure_panel_visible())
+
     def set_ai_panel_visible(self, visible: bool):
         """Enable or disable the AI panel."""
         self._set_panel_visible("ai", visible)
@@ -1673,6 +1724,10 @@ class HexEditorMainWindow(QWidget):
     def set_value_panel_visible(self, visible: bool):
         """Enable or disable the Value panel."""
         self._set_panel_visible("value", visible)
+
+    def set_structure_panel_visible(self, visible: bool):
+        """Enable or disable the structure panel."""
+        self._set_panel_visible("structure", visible)
 
     def _set_panel_visible(self, panel_id: str, visible: bool):
         """Update a specific side panel visibility flag."""
