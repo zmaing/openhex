@@ -13,7 +13,13 @@
       "Bash(git checkout:*)",
       "WebFetch(domain:minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com)",
       "Bash(sed:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(git push:*)",
+      "Bash(git:*)",
+      "Bash(ssh:*)",
+      "Bash(ssh-add:*)",
+      "Bash(ssh-keygen:*)",
+      "Bash(gh auth:*)"
     ]
   }
 }
