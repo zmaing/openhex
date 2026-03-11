@@ -73,6 +73,14 @@ class LocalAI(AIBase):
         super().__init__(parent)
         self._worker: Optional[LocalAIWorker] = None
         self._endpoint = "http://localhost:11434"
+        self._last_response = ""
+
+    def configure(self, **kwargs):
+        """Configure local provider settings."""
+        endpoint = kwargs.pop("endpoint", None)
+        if endpoint is not None:
+            self.endpoint = endpoint
+        super().configure(**kwargs)
 
     @property
     def provider_name(self) -> str:
@@ -117,75 +125,94 @@ class LocalAI(AIBase):
 
 Be concise and technical in your responses."""
 
+    def complete(self, messages: List[Dict[str, str]]) -> str:
+        """Complete a chat-style request."""
+        prompt_parts = []
+        for message in messages:
+            role = str(message.get("role", "user")).strip().lower()
+            content = str(message.get("content", ""))
+            if role == "system":
+                prompt_parts.append(f"System: {content}")
+            elif role == "assistant":
+                prompt_parts.append(f"Assistant: {content}")
+            else:
+                prompt_parts.append(f"User: {content}")
+
+        prompt_parts.append("Assistant:")
+        return self._send_request("\n\n".join(prompt_parts))
+
     def analyze(self, data: bytes, context: str = "") -> str:
         """Analyze binary data."""
-        if not self._is_available:
-            return "Local LLM not available. Please check your Ollama/LM Studio installation."
-
         data_repr = self._format_data_for_ai(data)
-
-        prompt = f"""{self._settings.system_prompt or self._get_default_system_prompt()}
-
-Analyze the following binary data:
-
-{data_repr}
-
-{context}
-
-Provide:
-1. Data type identification
-2. Potential structure/format
-3. Key observations
-4. Any concerning patterns
-
-If this is part of a larger file, note that only a sample was provided.
-"""
-
-        return self._send_request(prompt)
+        messages = [
+            {
+                "role": "system",
+                "content": self._settings.system_prompt or self._get_default_system_prompt(),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Analyze the following binary data:\n\n"
+                    f"{data_repr}\n\n{context}\n\n"
+                    "Provide:\n"
+                    "1. Data type identification\n"
+                    "2. Potential structure/format\n"
+                    "3. Key observations\n"
+                    "4. Any concerning patterns\n\n"
+                    "If this is part of a larger file, note that only a sample was provided."
+                ),
+            },
+        ]
+        return self.complete(messages)
 
     def explain(self, data: bytes, offset: int = 0, length: int = 0) -> str:
         """Explain data at offset."""
-        if not self._is_available:
-            return "Local LLM not available."
-
         if length == 0:
             length = len(data)
 
         sample = data[:min(length, 512)]
         data_repr = self._format_data_for_ai(sample)
-
-        prompt = f"""{self._settings.system_prompt or self._get_default_system_prompt()}
-
-Explain the binary data at offset {offset}:
-
-{data_repr}
-
-Provide a detailed explanation of:
-1. What this data represents
-2. The data type and encoding
-3. Any recognizable patterns or structures
-"""
-
-        return self._send_request(prompt)
+        messages = [
+            {
+                "role": "system",
+                "content": self._settings.system_prompt or self._get_default_system_prompt(),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Explain the binary data at offset {offset}:\n\n"
+                    f"{data_repr}\n\n"
+                    "Provide a detailed explanation of:\n"
+                    "1. What this data represents\n"
+                    "2. The data type and encoding\n"
+                    "3. Any recognizable patterns or structures"
+                ),
+            },
+        ]
+        return self.complete(messages)
 
     def generate_code(self, structure: Dict[str, Any], language: str = "c") -> str:
         """Generate parsing code."""
-        if not self._is_available:
-            return "Local LLM not available."
-
-        prompt = f"""Generate {language} code to parse this data structure:
-
-{json.dumps(structure, indent=2)}
-
-Requirements:
-- Use standard libraries only
-- Include error handling
-- Add comments explaining each step
-- Make it standalone and compilable
-
-Provide only the code with brief comments."""
-
-        return self._send_request(prompt)
+        messages = [
+            {
+                "role": "system",
+                "content": self._settings.system_prompt or "You are an expert programmer.",
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Generate {language} code to parse this data structure:\n\n"
+                    f"{json.dumps(structure, indent=2)}\n\n"
+                    "Requirements:\n"
+                    "- Use standard libraries only\n"
+                    "- Include error handling\n"
+                    "- Add comments explaining each step\n"
+                    "- Make it standalone and compilable\n\n"
+                    "Provide only the code with brief comments."
+                ),
+            },
+        ]
+        return self.complete(messages)
 
     def search_natural_language(self, query: str, data: bytes) -> List[Dict[str, Any]]:
         """Natural language search."""
@@ -221,34 +248,27 @@ If no matches, return {{"results": [], "count": 0}}"""
 
     def chat(self, message: str, history: List[Dict[str, str]] = None) -> str:
         """Chat with AI."""
-        if not self._is_available:
-            return "Local LLM not available. Please start Ollama or LM Studio."
-
-        prompt_parts = []
-
-        # System prompt
-        system = self._settings.system_prompt or self._get_default_system_prompt()
-        prompt_parts.append(f"System: {system}")
-
-        # History
+        messages = [
+            {
+                "role": "system",
+                "content": self._settings.system_prompt or self._get_default_system_prompt(),
+            }
+        ]
         if history:
-            for msg in history[-10:]:  # Limit history
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                prompt_parts.append(f"{role.capitalize()}: {content}")
-
-        # Current message
-        prompt_parts.append(f"User: {message}")
-
-        prompt_parts.append("Assistant:")
-
-        prompt = "\n\n".join(prompt_parts)
-
-        return self._send_request(prompt)
+            for msg in history[-10:]:
+                messages.append(
+                    {
+                        "role": msg.get("role", "user"),
+                        "content": msg.get("content", ""),
+                    }
+                )
+        messages.append({"role": "user", "content": message})
+        return self.complete(messages)
 
     def _send_request(self, prompt: str) -> str:
         """Send request to local LLM."""
         self.thinking_started.emit()
+        self._last_response = ""
 
         self._worker = LocalAIWorker(self._endpoint, prompt, self._settings)
         self._worker.response.connect(self._handle_response)
@@ -268,6 +288,7 @@ If no matches, return {{"results": [], "count": 0}}"""
 
     def _handle_error(self, error: str):
         """Handle AI error."""
+        self._last_response = f"Error: {error}"
         self.error_occurred.emit(error)
 
     def _handle_finished(self):
@@ -285,3 +306,4 @@ If no matches, return {{"results": [], "count": 0}}"""
         """Reset AI state."""
         super().reset()
         self._worker = None
+        self._last_response = ""

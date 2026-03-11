@@ -2589,6 +2589,28 @@ class HexView(QTableView):
         """Scroll to specific offset."""
         self._move_cursor_to_byte(offset)
 
+    def select_offset_range(self, start: int, end: int):
+        """Programmatically select a continuous byte range."""
+        if getattr(self._model, "_file_size", 0) <= 0:
+            self._model.clear_selection_highlight()
+            self.selection_changed.emit(-1, -1)
+            return
+
+        start = max(0, int(start))
+        end = max(0, int(end))
+        if end < start:
+            start, end = end, start
+
+        file_end = max(0, self._model._file_size - 1)
+        start = min(start, file_end)
+        end = min(end, file_end)
+
+        self._selection_mode = self.SELECTION_CONTINUOUS
+        self._model.set_selection(start, end)
+        self._move_cursor_to_byte(start)
+        self.selection_changed.emit(start, end)
+        self.viewport().update()
+
     def set_search_results(self, results, current_index=-1):
         """Set search results for highlighting."""
         self._model.set_search_results(results, current_index)

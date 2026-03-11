@@ -11,6 +11,14 @@ from .analyzer import AIAnalyzer
 from .search import AISearch
 from .coder import CodeGenerator
 from .manager import AIManager
+from .agent import (
+    AgentRunner,
+    AgentSession,
+    ChatMessage,
+    ToolInvocation,
+    ToolResult,
+    ToolSpec,
+)
 
 __all__ = [
     "AIBase",
@@ -21,4 +29,10 @@ __all__ = [
     "AISearch",
     "CodeGenerator",
     "AIManager",
+    "AgentRunner",
+    "AgentSession",
+    "ChatMessage",
+    "ToolInvocation",
+    "ToolResult",
+    "ToolSpec",
 ]

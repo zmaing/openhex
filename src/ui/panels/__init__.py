@@ -9,6 +9,7 @@ from .file_info import FileInfoPanel
 from .data_value import DataValuePanel
 from .bookmarks import BookmarksPanel
 from .structure_view import StructureViewPanel
+from .ai_agent import AIAgentPanel
 
 __all__ = [
     "FileBrowser",
@@ -16,4 +17,5 @@ __all__ = [
     "DataValuePanel",
     "BookmarksPanel",
     "StructureViewPanel",
+    "AIAgentPanel",
 ]

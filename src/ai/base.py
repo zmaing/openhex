@@ -15,6 +15,8 @@ class AIProvider(Enum):
     LOCAL = auto()
     CLOUD_OPENAI = auto()
     CLOUD_ANTHROPIC = auto()
+    CLOUD_MINIMAX = auto()
+    CLOUD_GLM = auto()
 
 
 @dataclass
@@ -141,6 +143,18 @@ class AIBase(QObject):
 
         Returns:
             Search results
+        """
+        raise NotImplementedError
+
+    def complete(self, messages: List[Dict[str, str]]) -> str:
+        """
+        Complete a chat-style list of messages.
+
+        Args:
+            messages: Chat messages in role/content form
+
+        Returns:
+            Model response text
         """
         raise NotImplementedError
 

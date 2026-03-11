@@ -5,8 +5,8 @@ Main hex editor widget with panels and views.
 """
 
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-                             QTabWidget, QLabel, QProgressBar, QFrame, QPushButton,
-                             QTextEdit, QToolButton, QButtonGroup)
+                             QTabWidget, QLabel, QProgressBar, QFrame, QToolButton,
+                             QButtonGroup)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QSettings, QTimer
 from typing import List
 from pathlib import Path
@@ -26,8 +26,10 @@ from ..utils.logger import logger
 from ..utils.format import FormatUtils
 from ..utils.i18n import tr
 from ..ai import AIManager
+from .agent_bridge import HexEditorAgentBridge
 from .panels.data_value import DataValuePanel
 from .panels.structure_view import StructureViewPanel
+from .panels.ai_agent import AIAgentPanel
 
 
 DEBUG_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "debug.log"
@@ -73,6 +75,7 @@ class HexEditorMainWindow(QWidget):
 
         # AI Manager
         self._ai_manager = AIManager(self)
+        self._agent_bridge = HexEditorAgentBridge(self)
 
         # Search Engine
         self._search_engine = SearchEngine(self)
@@ -128,8 +131,12 @@ class HexEditorMainWindow(QWidget):
                 'model': s.value('ai_cloud_model', 'gpt-4o'),
             }
         }
+        app = QApplication.instance()
+        if app is not None:
+            app._ai_settings = settings
         self._ai_manager.configure(settings)
-        self._ai_status.setText(f"Provider: {settings.get('provider', 'local').title()}")
+        if hasattr(self, "_ai_panel_widget"):
+            self._ai_panel_widget.refresh_provider_status()
 
     def _load_side_panel_settings(self):
         """Restore side panel visibility and layout settings."""
@@ -933,67 +940,9 @@ class HexEditorMainWindow(QWidget):
 
     def _create_ai_panel(self):
         """Create AI analysis panel."""
-        panel = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        # Title
-        title = QLabel("AI Assistant")
-        title.setStyleSheet("font-weight: bold; color: #cccccc;")
-        layout.addWidget(title)
-
-        # Status
-        self._ai_status = QLabel("Not configured")
-        self._ai_status.setStyleSheet("color: #858585;")
-        layout.addWidget(self._ai_status)
-
-        # Buttons
-        btn_style = """
-            QPushButton {
-                background-color: #3c3c3c;
-                color: #cccccc;
-                border: none;
-                padding: 8px 12px;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #4c4c4c;
-            }
-        """
-
-        analyze_btn = QPushButton("Analyze Data")
-        analyze_btn.setStyleSheet(btn_style)
-        analyze_btn.clicked.connect(self.analyze_selection)
-        layout.addWidget(analyze_btn)
-
-        detect_btn = QPushButton("Detect Patterns")
-        detect_btn.setStyleSheet(btn_style)
-        detect_btn.clicked.connect(self.detect_patterns)
-        layout.addWidget(detect_btn)
-
-        gen_code_btn = QPushButton("Generate Code")
-        gen_code_btn.setStyleSheet(btn_style)
-        gen_code_btn.clicked.connect(self.generate_parsing_code)
-        layout.addWidget(gen_code_btn)
-
-        # AI output
-        self._ai_output = QTextEdit()
-        self._ai_output.setReadOnly(True)
-        self._ai_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #3c3c3c;
-                font-family: 'Menlo', 'Consolas', monospace;
-                font-size: 10px;
-            }
-        """)
-        layout.addWidget(self._ai_output)
-
-        layout.addStretch()
-        panel.setLayout(layout)
-        return panel
+        self._ai_panel_widget = AIAgentPanel(self, self._ai_manager, self._agent_bridge)
+        self._ai_panel_widget.open_settings_requested.connect(self.show_ai_settings)
+        return self._ai_panel_widget
 
     def _connect_signals(self):
         """Connect signals."""
@@ -1801,6 +1750,32 @@ class HexEditorMainWindow(QWidget):
         """Toggle the AI side panel from the View menu."""
         self.set_ai_panel_visible(not self.is_ai_panel_visible())
 
+    def focus_ai_panel(self):
+        """Ensure the AI side panel is visible and focused."""
+        if not self.is_ai_panel_visible():
+            self.set_ai_panel_visible(True)
+
+        if self._active_panel_id != "ai":
+            self._active_panel_id = "ai"
+            self._refresh_side_panel_layout()
+            self._save_side_panel_settings()
+
+        if self._panel_layout_mode == "tabs":
+            index = self._panel_tabs.indexOf(self._ai_panel)
+            if index >= 0:
+                self._panel_tabs.setCurrentIndex(index)
+                self._sync_tab_panel_visibility()
+
+        if hasattr(self, "_ai_panel_widget"):
+            self._ai_panel_widget.focus_input()
+
+    def submit_ai_prompt(self, prompt: str) -> bool:
+        """Focus the AI panel and submit a prompt into the chat runtime."""
+        self.focus_ai_panel()
+        if not hasattr(self, "_ai_panel_widget"):
+            return False
+        return self._ai_panel_widget.send_preset_prompt(prompt)
+
     def toggle_value_panel(self):
         """Toggle Value panel visibility inside the side panel container."""
         self.set_value_panel_visible(not self.is_value_panel_visible())
@@ -1957,7 +1932,7 @@ class HexEditorMainWindow(QWidget):
     # Tools
     def compare_files(self):
         """Compare two files."""
-        self._ai_output.setPlainText("File compare not yet implemented")
+        self._status_bar.showMessage("File compare not yet implemented", 3000)
 
     def show_checksum_dialog(self):
         """Show checksum dialog."""
@@ -1975,65 +1950,49 @@ class HexEditorMainWindow(QWidget):
         """Analyze selected data with AI."""
         doc = self._document_model.current_document
         if not doc:
-            self._ai_output.setPlainText("No file open")
+            self._status_bar.showMessage("No file open", 3000)
             return
 
-        # Get first 4KB of data for analysis
-        data = doc.read(0, min(doc.file_size, 4096))
+        hex_view = self._get_current_hex_view()
+        if hex_view is not None:
+            _data, start, end = hex_view.get_selection_data()
+            if start >= 0 and end >= start:
+                self.submit_ai_prompt(
+                    "Analyze the current selection. "
+                    "Start with read_selection, then explain the structure, encoding, and any unusual patterns."
+                )
+                return
 
-        self._ai_output.setPlainText("Analyzing data...")
-        result = self._ai_manager.analyze(data, "Analyze this binary data and explain its structure")
-        self._ai_output.setPlainText(result)
+        self.submit_ai_prompt(
+            "Analyze the current file. "
+            "Start with get_file_metadata and use read_bytes as needed to explain the file structure."
+        )
 
     def detect_patterns(self):
         """Detect data patterns with AI."""
         doc = self._document_model.current_document
         if not doc:
-            self._ai_output.setPlainText("No file open")
+            self._status_bar.showMessage("No file open", 3000)
             return
 
-        # Use built-in pattern detection
-        from ..core.parser.auto import AutoParser
-        data = doc.read(0, min(doc.file_size, 4096))
-        parser = AutoParser()
-        patterns = parser.analyze(data)
-
-        result = f"Found {len(patterns)} pattern(s):\n\n"
-        for p in patterns[:10]:
-            result += f"- {p.pattern_type.name}: {p.description}\n"
-
-        self._ai_output.setPlainText(result)
+        self.submit_ai_prompt(
+            "Detect important patterns in the active file. "
+            "Start with get_file_metadata, then call detect_patterns and read_bytes if you need more detail. "
+            "Summarize the most relevant patterns and offsets."
+        )
 
     def generate_parsing_code(self):
         """Generate parsing code."""
         doc = self._document_model.current_document
         if not doc:
-            self._ai_output.setPlainText("No file open")
+            self._status_bar.showMessage("No file open", 3000)
             return
 
-        # Get data for structure analysis
-        data = doc.read(0, min(doc.file_size, 4096))
-
-        # Use built-in structure detection first
-        from ..core.parser.auto import AutoParser
-        parser = AutoParser()
-        patterns = parser.analyze(data)
-
-        # Build structure description
-        structure = {"patterns": []}
-        for p in patterns[:5]:
-            structure["patterns"].append({
-                "type": p.pattern_type.name,
-                "offset": p.offset,
-                "length": p.length,
-                "description": p.description
-            })
-
-        self._ai_output.setPlainText("Generating parsing code...")
-
-        # Generate C code for the structure
-        result = self._ai_manager.generate_code(structure, "c")
-        self._ai_output.setPlainText(result)
+        self.submit_ai_prompt(
+            "Generate parsing code for the active file or current row. "
+            "Start with get_file_metadata. If structure configs exist, inspect them with list_structure_configs "
+            "and decode_structure before producing code. Include assumptions and return the final code in a code block."
+        )
 
     def show_ai_settings(self):
         """Show AI settings dialog."""
@@ -2061,8 +2020,9 @@ class HexEditorMainWindow(QWidget):
             s.setValue('ai_cloud_api_key', settings.get('cloud', {}).get('api_key', ''))
             s.setValue('ai_cloud_base_url', settings.get('cloud', {}).get('base_url', ''))
             s.setValue('ai_cloud_model', settings.get('cloud', {}).get('model', ''))
-
-            self._ai_status.setText(f"Provider: {settings.get('provider', 'local').title()}")
+            self._ai_manager.configure(settings)
+            if hasattr(self, "_ai_panel_widget"):
+                self._ai_panel_widget.refresh_provider_status()
 
     # Tab management
     def _add_editor_tab(self, doc: FileHandle):
