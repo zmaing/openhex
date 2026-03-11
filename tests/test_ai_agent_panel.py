@@ -10,6 +10,7 @@ import time
 
 from PyQt6.QtTest import QTest
 
+from src.ai.agent import ChatMessage
 from src.app import OpenHexApp
 from src.main import OpenHexMainWindow
 
@@ -179,5 +180,134 @@ def test_ai_agent_panel_disables_navigation_tools_by_default():
         panel = window._hex_editor._ai_panel_widget
         assert not panel._allow_navigation_tools
         assert panel._runner._disabled_tool_names == {"activate_file", "navigate_to_offset", "select_range"}
+    finally:
+        window.close()
+
+
+def test_ai_agent_panel_inline_model_selector_updates_active_settings():
+    """Selecting a model from the inline dropdown should update the active manager settings."""
+    app = OpenHexApp.instance()
+    window = OpenHexMainWindow()
+    app.processEvents()
+
+    try:
+        editor = window._hex_editor
+        panel = editor._ai_panel_widget
+        app._ai_settings = {
+            "enabled": True,
+            "provider": "local",
+            "local": {
+                "endpoint": "http://localhost:11434",
+                "model": "qwen:7b",
+                "temperature": 0.7,
+                "max_tokens": 4096,
+                "timeout": 60,
+            },
+            "cloud": {
+                "provider": "openai",
+                "api_key": "",
+                "base_url": "",
+                "model": "gpt-4o",
+                "temperature": 0.7,
+                "max_tokens": 4096,
+                "timeout": 60,
+            },
+        }
+        editor._ai_manager.configure(app._ai_settings)
+        panel.refresh_provider_status()
+
+        panel._select_model("llama3:8b")
+
+        assert editor._ai_manager.current_model_name == "llama3:8b"
+        assert app._ai_settings["local"]["model"] == "llama3:8b"
+        assert panel._model_button.text() == "llama3:8b v"
+    finally:
+        window.close()
+
+
+def test_ai_agent_panel_compose_prompt_supports_path_attachments_and_deep_thinking():
+    """Path attachments and the deep-thinking toggle should be reflected in the composed model prompt."""
+    app = OpenHexApp.instance()
+    window = OpenHexMainWindow()
+    app.processEvents()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        file_path = os.path.join(temp_dir, "sample.bin")
+        with open(file_path, "wb") as handle:
+            handle.write(b"\x01\x02\x03\x04")
+
+        try:
+            panel = window._hex_editor._ai_panel_widget
+            file_descriptor = panel._path_attachment_descriptor(file_path)
+            folder_descriptor = panel._folder_attachment_descriptor(temp_dir)
+
+            assert file_descriptor is not None
+            assert folder_descriptor is not None
+
+            panel._add_manual_attachment(file_descriptor)
+            panel._add_manual_attachment(folder_descriptor)
+            panel._set_deep_thinking_enabled(True)
+
+            model_prompt, display_prompt = panel._compose_prompt("Compare the attached paths")
+
+            assert display_prompt == "Compare the attached paths"
+            assert "Deep thinking is enabled." in model_prompt
+            assert file_path in model_prompt
+            assert temp_dir in model_prompt
+        finally:
+            window.close()
+
+
+def test_ai_agent_panel_groups_reasoning_messages_into_single_trace_card():
+    """Thinking, tool calls, and tool results should be grouped into one reasoning card."""
+    app = OpenHexApp.instance()
+    window = OpenHexMainWindow()
+    app.processEvents()
+
+    try:
+        panel = window._hex_editor._ai_panel_widget
+
+        panel._append_message(ChatMessage(kind="user", role="user", content="Analyze"))
+        panel._append_message(
+            ChatMessage(
+                kind="thinking",
+                role="system",
+                content="Thinking (step 1/8)",
+                metadata={"step": 1},
+            )
+        )
+        panel._append_message(
+            ChatMessage(
+                kind="tool_call",
+                role="assistant",
+                content='{"tool_name":"get_file_metadata","arguments":{"target":"sample.bin"}}',
+                metadata={
+                    "tool_name": "get_file_metadata",
+                    "arguments": {"target": "sample.bin"},
+                    "step": 1,
+                },
+            )
+        )
+        panel._append_message(
+            ChatMessage(
+                kind="tool_result",
+                role="tool",
+                content='{"success": true, "size": 4}',
+                metadata={
+                    "tool_name": "get_file_metadata",
+                    "success": True,
+                    "data": {"size": 4},
+                    "step": 1,
+                },
+                collapsed=True,
+            )
+        )
+        panel._append_message(ChatMessage(kind="assistant", role="assistant", content="Done"))
+
+        assert len(panel._message_cards) == 3
+        trace_card = panel._message_cards[1]
+        assert hasattr(trace_card, "_event_rows")
+        assert len(trace_card._event_rows) == 3
+        assert trace_card._count_label.text() == "3 steps"
     finally:
         window.close()

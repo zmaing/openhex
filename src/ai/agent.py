@@ -249,7 +249,11 @@ class AgentTurnExecutor:
                         ensure_ascii=False,
                         indent=2,
                     ),
-                    metadata={"tool_name": invocation.name},
+                    metadata={
+                        "tool_name": invocation.name,
+                        "arguments": invocation.arguments,
+                        "step": step,
+                    },
                 )
             )
 
@@ -264,6 +268,7 @@ class AgentTurnExecutor:
                         "tool_name": tool_result.name,
                         "success": tool_result.success,
                         "data": tool_result.data,
+                        "step": step,
                     },
                     collapsed=True,
                 )

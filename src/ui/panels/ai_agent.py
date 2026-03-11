@@ -4,12 +4,15 @@ Continue-style chat panel for the AI agent sidebar.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Optional
 
-from PyQt6.QtCore import QSize, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QSettings, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QFont
 from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -18,10 +21,10 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from ...ai.agent import AgentRunner, AgentSession, ChatMessage
@@ -159,11 +162,11 @@ class _AttachmentChip(QFrame):
         self.setObjectName("agentAttachmentChip")
 
         layout = QHBoxLayout()
-        layout.setContentsMargins(10, 4, 6, 4)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 3, 4, 3)
+        layout.setSpacing(4)
 
         label_widget = QLabel(label, self)
-        label_widget.setStyleSheet("font-size: 11px; font-weight: 600;")
+        label_widget.setStyleSheet("font-size: 10px; font-weight: 600;")
         layout.addWidget(label_widget)
 
         if removable:
@@ -176,6 +179,188 @@ class _AttachmentChip(QFrame):
         self.setLayout(layout)
 
 
+class _TraceEventRow(QFrame):
+    """Compact row used inside the aggregated thinking trace card."""
+
+    STYLE_MAP = {
+        "thinking": ("Thinking", "#89d6ff", "#24303a"),
+        "tool_call": ("Tool", "#f0c36d", "#362f22"),
+        "tool_result": ("Result", "#9ed6a4", "#213526"),
+    }
+
+    def __init__(self, message: ChatMessage, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._message = message
+        self._expanded = False
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        badge_text, accent_color, background_color = self.STYLE_MAP.get(
+            self._message.kind,
+            ("Step", "#d0d0d0", "#2b2b30"),
+        )
+        self.setStyleSheet(
+            f"""
+            QFrame {{
+                background-color: {background_color};
+                border: 1px solid #45454c;
+                border-radius: 10px;
+            }}
+            QLabel {{
+                background: transparent;
+                border: none;
+            }}
+            QToolButton {{
+                background: transparent;
+                border: none;
+                color: #b9b9c0;
+                padding: 0;
+            }}
+            """
+        )
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+
+        badge = QLabel(badge_text, self)
+        badge.setStyleSheet(
+            f"color: {accent_color}; font-size: 10px; font-weight: 700;"
+        )
+        header_layout.addWidget(badge)
+
+        title = QLabel(self._title_text(), self)
+        title.setWordWrap(True)
+        title.setStyleSheet("color: #ececef; font-size: 10px; font-weight: 600;")
+        header_layout.addWidget(title, 1)
+
+        details_text = self._details_text().strip()
+        self._toggle_button = None
+        if details_text:
+            toggle = QToolButton(self)
+            toggle.setText("▸" if not self._expanded else "▾")
+            toggle.clicked.connect(self._toggle_details)
+            header_layout.addWidget(toggle)
+            self._toggle_button = toggle
+
+        layout.addLayout(header_layout)
+
+        self._details_label = QLabel(details_text, self)
+        details_font = QFont("Menlo", 9)
+        details_font.setStyleHint(QFont.StyleHint.Monospace)
+        self._details_label.setFont(details_font)
+        self._details_label.setWordWrap(True)
+        self._details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._details_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._details_label.setStyleSheet("color: #cfd7df; font-size: 9px;")
+        self._details_label.setVisible(self._expanded)
+        if details_text:
+            layout.addWidget(self._details_label)
+
+        self.setLayout(layout)
+
+    def _title_text(self) -> str:
+        step = self._message.metadata.get("step")
+        if self._message.kind == "thinking":
+            if isinstance(step, int):
+                return f"Step {step}: {self._message.content}"
+            return self._message.content
+
+        tool_name = str(self._message.metadata.get("tool_name", "")).strip() or "tool"
+        if self._message.kind == "tool_call":
+            arguments = self._message.metadata.get("arguments", {})
+            summary = self._summarize_arguments(arguments)
+            return f"{tool_name}{summary}"
+
+        if self._message.kind == "tool_result":
+            status = "done" if self._message.metadata.get("success", True) else "failed"
+            return f"{tool_name} · {status}"
+
+        return self._message.content
+
+    def _details_text(self) -> str:
+        if self._message.kind == "thinking":
+            return ""
+        return str(self._message.content or "")
+
+    def _summarize_arguments(self, arguments: Any) -> str:
+        if not isinstance(arguments, dict) or not arguments:
+            return ""
+        parts: list[str] = []
+        for key, value in list(arguments.items())[:2]:
+            text = str(value)
+            if len(text) > 20:
+                text = text[:20] + "..."
+            parts.append(f"{key}={text}")
+        return f" ({', '.join(parts)})"
+
+    def _toggle_details(self) -> None:
+        self._expanded = not self._expanded
+        self._details_label.setVisible(self._expanded)
+        if self._toggle_button is not None:
+            self._toggle_button.setText("▾" if self._expanded else "▸")
+
+
+class _ThinkingTraceCard(QFrame):
+    """Aggregates one assistant turn's reasoning steps inside a single transcript card."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._event_rows: list[_TraceEventRow] = []
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        self.setStyleSheet(
+            """
+            QFrame {
+                background-color: #242428;
+                border: 1px solid #3f4047;
+                border-radius: 12px;
+            }
+            QLabel {
+                background: transparent;
+                border: none;
+            }
+            """
+        )
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+
+        title = QLabel("Thinking Process", self)
+        title.setStyleSheet("color: #9cdcfe; font-weight: 700; font-size: 11px;")
+        header_layout.addWidget(title)
+
+        header_layout.addStretch()
+
+        self._count_label = QLabel("0 steps", self)
+        self._count_label.setStyleSheet("color: #8c8c94; font-size: 10px;")
+        header_layout.addWidget(self._count_label)
+
+        layout.addLayout(header_layout)
+
+        self._events_layout = QVBoxLayout()
+        self._events_layout.setContentsMargins(0, 0, 0, 0)
+        self._events_layout.setSpacing(6)
+        layout.addLayout(self._events_layout)
+        self.setLayout(layout)
+
+    def add_message(self, message: ChatMessage) -> None:
+        row = _TraceEventRow(message, self)
+        self._events_layout.addWidget(row)
+        self._event_rows.append(row)
+        self._count_label.setText(f"{len(self._event_rows)} steps")
+
+
 class AIAgentPanel(QWidget):
     """Chat-first AI panel that uses the agent runtime and editor tools."""
 
@@ -186,6 +371,33 @@ class AIAgentPanel(QWidget):
         "agent": "Agent",
     }
     MAX_STEPS_OPTIONS = (4, 8, 12)
+    LOCAL_MODEL_OPTIONS = [
+        "qwen:7b",
+        "qwen:14b",
+        "llama3:8b",
+        "llama3:70b",
+        "mistral:7b",
+        "codellama:7b",
+        "phi3:14b",
+    ]
+    CLOUD_MODEL_OPTIONS = {
+        "openai": ["gpt-4o", "gpt-4.1", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
+        "anthropic": [
+            "claude-sonnet-4-20250514",
+            "claude-3-7-sonnet-latest",
+            "claude-3-5-sonnet-latest",
+            "claude-3-opus-20240229",
+        ],
+        "minimax": ["MiniMax-M2.5", "MiniMax-M1"],
+        "glm": ["glm-5", "glm-4.5", "glm-4.5-air", "glm-4.5-flash"],
+    }
+    PROVIDER_CONFIG_LABELS = {
+        "local": "Local Config",
+        "openai": "OpenAI Config",
+        "anthropic": "Anthropic Config",
+        "minimax": "MiniMax Config",
+        "glm": "GLM Config",
+    }
     PROMPT_SUGGESTIONS = {
         "Analyze Current File": "Analyze the active file structure and likely record layout.",
         "Analyze Selection": "Analyze the selected bytes and explain what they represent.",
@@ -199,16 +411,17 @@ class AIAgentPanel(QWidget):
         self._tool_host = tool_host
         self._runner: Optional[AgentRunner] = None
         self._session = AgentSession()
-        self._message_cards: list[_MessageCard] = []
+        self._message_cards: list[QWidget] = []
+        self._active_trace_card: Optional[_ThinkingTraceCard] = None
         self._attachment_chips: list[_AttachmentChip] = []
         self._manual_attachments: list[dict[str, str]] = []
         self._interaction_mode = "chat"
         self._pin_active_file = True
         self._allow_navigation_tools = False
         self._max_steps = 8
+        self._deep_thinking_enabled = False
         self._attachment_menu: Optional[QMenu] = None
-        self._context_menu: Optional[QMenu] = None
-        self._prompt_menu: Optional[QMenu] = None
+        self._model_menu: Optional[QMenu] = None
         self._build_ui()
         self._set_runner(AgentRunner(ai_manager, tool_host, self) if ai_manager and tool_host else None)
         self.refresh_provider_status()
@@ -253,17 +466,15 @@ class AIAgentPanel(QWidget):
         """Refresh the top status line with the current provider/model."""
         if self._ai_manager is None:
             self._status_label.setText("Not configured")
-            self._model_button.setText("Model")
-            self._config_button.setText("Config")
+            self._model_button.setText("Model v")
             return
         status_text = self._ai_manager.status_text()
         provider_name = getattr(self._ai_manager, "current_provider_name", "AI")
         model_name = getattr(self._ai_manager, "current_model_name", "") or provider_name
-        self._status_label.setText(status_text)
-        self._model_button.setText(model_name)
+        self._status_label.setText(provider_name)
+        self._status_label.setToolTip(status_text)
+        self._model_button.setText(f"{model_name} v")
         self._model_button.setToolTip(status_text)
-        self._config_button.setText("Config")
-        self._config_button.setToolTip(f"{provider_name} settings")
 
     def clear_session(self) -> None:
         """Reset the transcript."""
@@ -274,8 +485,9 @@ class AIAgentPanel(QWidget):
             self._message_layout.removeWidget(card)
             card.deleteLater()
         self._message_cards.clear()
+        self._active_trace_card = None
         self._placeholder.setVisible(True)
-        self._status_hint.setText("Session cleared")
+        self._set_status_hint("Session cleared")
 
     def submit_prompt(self, prompt: str, *, display_prompt: Optional[str] = None) -> bool:
         """Submit a prompt directly to the agent runner."""
@@ -289,7 +501,7 @@ class AIAgentPanel(QWidget):
             return False
         started = self._runner.start_turn(self._session, prompt, display_prompt=display_prompt or prompt)
         if started:
-            self._status_hint.setText("Running")
+            self._set_status_hint("Running")
         return started
 
     def send_preset_prompt(self, prompt: str) -> bool:
@@ -297,184 +509,244 @@ class AIAgentPanel(QWidget):
         model_prompt, display_prompt = self._compose_prompt(prompt)
         return self.submit_prompt(model_prompt, display_prompt=display_prompt)
 
+    def _set_status_hint(self, text: str = "") -> None:
+        """Show a lightweight transient hint only when there is something useful to say."""
+        value = str(text or "").strip()
+        self._status_hint.setText(value)
+        self._status_hint.setVisible(bool(value))
+
     def _build_ui(self) -> None:
         self.setObjectName("aiAgentPanel")
         self.setStyleSheet(
             """
             QWidget#aiAgentPanel {
-                background-color: #252526;
-                color: #d4d4d4;
+                background-color: #1f1f21;
+                color: #e2e2e2;
             }
             QWidget#aiAgentPanel QLabel {
                 background: transparent;
                 border: none;
             }
             QWidget#aiAgentPanel QPlainTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #3c3c3c;
-                border-radius: 6px;
-                padding: 8px;
-                selection-background-color: #094771;
+                background-color: transparent;
+                color: #ececec;
+                border: none;
+                border-radius: 0;
+                padding: 4px;
+                selection-background-color: #1d5e99;
             }
             QWidget#aiAgentPanel QPushButton {
-                background-color: #2d2d30;
-                color: #d4d4d4;
-                border: 1px solid #3c3c3c;
-                border-radius: 5px;
-                padding: 5px 10px;
-                min-height: 28px;
+                background-color: #3a3a40;
+                color: #ececec;
+                border: 1px solid #4b4b53;
+                border-radius: 8px;
+                padding: 3px 9px;
+                min-height: 24px;
+                font-size: 11px;
             }
             QWidget#aiAgentPanel QPushButton:hover {
-                background-color: #37373d;
+                background-color: #44444c;
             }
             QWidget#aiAgentPanel QToolButton {
                 background-color: transparent;
-                color: #d4d4d4;
+                color: #ececec;
                 border: none;
-                padding: 4px 6px;
-                border-radius: 4px;
+                padding: 1px 5px;
+                border-radius: 6px;
+                font-size: 11px;
             }
             QWidget#aiAgentPanel QToolButton:hover {
-                background-color: #37373d;
+                background-color: #3a3a40;
+            }
+            QLabel#agentSectionTitle {
+                color: #f2f2f4;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QLabel#agentPanelSubtitle {
+                color: #7f7f87;
+                font-size: 10px;
+                padding-left: 1px;
+            }
+            QMenu {
+                background-color: #2f2f33;
+                color: #ececec;
+                border: 1px solid #505057;
+                border-radius: 14px;
+                padding: 8px;
+            }
+            QMenu::item {
+                border-radius: 8px;
+                padding: 8px 12px;
+                margin: 1px 0;
+            }
+            QMenu::item:selected {
+                background-color: #424249;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #4a4a52;
+                margin: 6px 2px;
             }
             QFrame#agentComposerCard {
-                background-color: #2b2b2d;
-                border: 1px solid #45454a;
-                border-radius: 12px;
-            }
-            QFrame#agentComposerToolbar {
-                background-color: #323236;
-                border: 1px solid #45454a;
-                border-radius: 9px;
+                background-color: qlineargradient(
+                    x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 #313136,
+                    stop: 1 #2a2a2f
+                );
+                border: 1px solid #51515a;
+                border-radius: 14px;
             }
             QPlainTextEdit#agentComposerEditor {
                 background: transparent;
                 border: none;
                 border-radius: 0;
-                padding: 2px 0 6px 0;
-                min-height: 92px;
+                padding: 1px 2px 3px 2px;
+                min-height: 42px;
+                max-height: 64px;
+                font-size: 12px;
             }
-            QToolButton#agentFlatControl {
-                background-color: transparent;
-                border: 1px solid #4a4a4f;
-                border-radius: 9px;
-                padding: 4px 10px;
-                min-height: 28px;
+            QToolButton#agentModeButton,
+            QToolButton#agentModelButton,
+            QToolButton#agentMentionButton,
+            QToolButton#agentThinkingButton {
+                min-height: 22px;
             }
-            QToolButton#agentFlatControl:hover {
-                background-color: #3a3a3f;
+            QToolButton#agentModeButton {
+                background-color: #354051;
+                border: 1px solid #46607d;
+                border-radius: 11px;
+                font-weight: 600;
+                padding: 1px 9px;
             }
-            QToolButton#agentFlatControl::menu-indicator,
-            QToolButton#agentIconButton::menu-indicator,
-            QToolButton#agentFooterButton::menu-indicator,
-            QToolButton#agentToolbarButton::menu-indicator {
+            QToolButton#agentModeButton:hover {
+                background-color: #3f4d62;
+            }
+            QToolButton#agentModeButton::menu-indicator,
+            QToolButton#agentModelButton::menu-indicator,
+            QToolButton#agentMentionButton::menu-indicator {
                 image: none;
                 width: 0px;
             }
-            QToolButton#agentIconButton {
-                background-color: transparent;
-                border: none;
-                border-radius: 6px;
-                padding: 4px;
-                min-width: 28px;
-                max-width: 28px;
-                min-height: 28px;
+            QToolButton#agentModelButton {
+                background-color: #313138;
+                border: 1px solid #414149;
+                border-radius: 8px;
+                padding: 1px 8px;
+                color: #d8d8dd;
+                text-align: left;
             }
-            QToolButton#agentIconButton:hover {
-                background-color: #3a3a3f;
+            QToolButton#agentModelButton:hover {
+                background-color: #383840;
             }
-            QToolButton#agentFooterButton {
-                background-color: transparent;
-                border: none;
-                border-radius: 6px;
-                padding: 4px 8px;
-                min-height: 28px;
+            QToolButton#agentMentionButton,
+            QToolButton#agentThinkingButton {
+                background-color: #313138;
+                border: 1px solid #414149;
+                border-radius: 7px;
+                padding: 1px 5px;
+                min-width: 22px;
             }
-            QToolButton#agentFooterButton:hover {
-                background-color: #3a3a3f;
+            QToolButton#agentMentionButton:hover,
+            QToolButton#agentThinkingButton:hover {
+                background-color: #383840;
             }
-            QToolButton#agentToolbarButton {
-                background-color: transparent;
-                border: none;
-                border-radius: 6px;
-                padding: 4px 8px;
+            QToolButton#agentThinkingButton:checked {
+                color: #f3d97a;
+                background-color: #4b4324;
+                border-color: #625933;
             }
-            QToolButton#agentToolbarButton:hover {
-                background-color: #3a3a3f;
+            QWidget#agentMenuHeader {
+                background: transparent;
+            }
+            QToolButton#agentMenuHeaderButton {
+                background-color: #3f3f45;
+                border: 1px solid #56565d;
+                border-radius: 7px;
+                padding: 2px 8px;
             }
             QFrame#agentAttachmentChip {
-                background-color: #343438;
-                border: 1px solid #4f4f54;
-                border-radius: 12px;
+                background-color: #36363c;
+                border: 1px solid #4f4f57;
+                border-radius: 11px;
             }
             QPushButton#agentPrimaryButton {
-                background-color: #0e639c;
-                border-color: #1177bb;
+                background-color: qlineargradient(
+                    x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 #1a87eb,
+                    stop: 1 #0f78d9
+                );
+                border-color: #2389e7;
                 color: #ffffff;
                 font-weight: 600;
-                min-width: 84px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 24px;
+                max-height: 24px;
+                padding: 0;
+                border-radius: 7px;
             }
             QPushButton#agentPrimaryButton:hover {
-                background-color: #1177bb;
+                background-color: #2392f3;
             }
-            QPushButton#agentToggleChip {
-                border-radius: 12px;
-                padding: 4px 12px;
-            }
-            QPushButton#agentToggleChip:checked {
-                background-color: #1f4a7a;
-                border-color: #3a77d2;
+            QPushButton#agentStopButton {
+                background-color: #5b2b2b;
+                border-color: #7a3838;
                 color: #ffffff;
+                min-width: 46px;
             }
-            QPushButton#agentInlineToggle {
-                background-color: transparent;
-                border: 1px solid transparent;
-                color: #d4d4d4;
-                padding: 4px 8px;
-                min-height: 28px;
+            QLabel#agentStatusLabel {
+                color: #8fd4ff;
+                background-color: #253545;
+                border: 1px solid #334b62;
+                border-radius: 9px;
+                padding: 1px 7px;
+                font-size: 10px;
+                font-weight: 600;
             }
-            QPushButton#agentInlineToggle:checked {
-                background-color: #2d2d30;
-                border-color: #4a4a4f;
+            QLabel#agentStatusHint {
+                color: #8f8f94;
+                font-size: 10px;
+                padding-left: 2px;
+            }
+            QLabel#agentEmptyState {
+                color: #b1b1b8;
+                background-color: #25252a;
+                border: 1px solid #34343b;
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-size: 10px;
             }
             """
         )
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(6)
 
-        title = QLabel("AI Agent")
-        title.setStyleSheet("font-weight: 700; font-size: 13px;")
+        title = QLabel("AI Assistant")
+        title.setObjectName("agentSectionTitle")
         header_layout.addWidget(title)
 
         header_layout.addStretch()
 
-        clear_button = QToolButton(self)
-        clear_button.setText("Clear")
-        clear_button.clicked.connect(self.clear_session)
-        self._clear_button = clear_button
-        header_layout.addWidget(clear_button)
-
-        settings_button = QToolButton(self)
-        settings_button.setText("Settings")
-        settings_button.clicked.connect(self.open_settings_requested.emit)
-        header_layout.addWidget(settings_button)
+        self._status_label = QLabel("Not configured")
+        self._status_label.setObjectName("agentStatusLabel")
+        header_layout.addWidget(self._status_label)
 
         layout.addLayout(header_layout)
 
-        self._status_label = QLabel("Not configured")
-        self._status_label.setStyleSheet("color: #9cdcfe;")
-        layout.addWidget(self._status_label)
+        subtitle = QLabel("Inspect the active file, selection, or structure from one place.")
+        subtitle.setObjectName("agentPanelSubtitle")
+        layout.addWidget(subtitle)
 
-        self._status_hint = QLabel("Ask the assistant to inspect the active binary.")
-        self._status_hint.setStyleSheet("color: #858585;")
-        layout.addWidget(self._status_hint)
+        self._status_hint = QLabel("")
+        self._status_hint.setObjectName("agentStatusHint")
+        self._status_hint.setVisible(False)
 
         scroll_area = QScrollArea(self)
         scroll_area.setWidgetResizable(True)
@@ -488,9 +760,11 @@ class AIAgentPanel(QWidget):
         self._message_layout.setContentsMargins(0, 0, 0, 0)
         self._message_layout.setSpacing(8)
 
-        self._placeholder = QLabel("No conversation yet. Describe what you want to inspect.")
+        self._placeholder = QLabel(
+            "No conversation yet.\nAsk about the active file, current selection, or structure."
+        )
+        self._placeholder.setObjectName("agentEmptyState")
         self._placeholder.setWordWrap(True)
-        self._placeholder.setStyleSheet("color: #858585; padding: 12px 8px;")
         self._message_layout.addWidget(self._placeholder)
         self._message_layout.addStretch()
         message_container.setLayout(self._message_layout)
@@ -498,134 +772,89 @@ class AIAgentPanel(QWidget):
         self._scroll_area = scroll_area
         layout.addWidget(scroll_area, 1)
 
-        toolbar_strip = QFrame(self)
-        toolbar_strip.setObjectName("agentComposerToolbar")
-        toolbar_layout = QHBoxLayout()
-        toolbar_layout.setContentsMargins(8, 6, 8, 6)
-        toolbar_layout.setSpacing(4)
-
-        self._attach_button = QToolButton(toolbar_strip)
-        self._attach_button.setObjectName("agentIconButton")
-        self._attach_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
-        self._attach_button.setIconSize(QSize(16, 16))
-        self._attach_button.setToolTip("Attach files and editor context")
-        toolbar_layout.addWidget(self._attach_button)
-
-        self._context_button = QToolButton(toolbar_strip)
-        self._context_button.setObjectName("agentIconButton")
-        self._context_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        )
-        self._context_button.setIconSize(QSize(16, 16))
-        self._context_button.setToolTip("Attach current selection, row, or structure context")
-        toolbar_layout.addWidget(self._context_button)
-
-        self._preset_button = QToolButton(toolbar_strip)
-        self._preset_button.setObjectName("agentIconButton")
-        self._preset_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
-        self._preset_button.setIconSize(QSize(16, 16))
-        self._preset_button.setToolTip("Insert prompt suggestions")
-        toolbar_layout.addWidget(self._preset_button)
-
-        toolbar_layout.addStretch()
-
-        self._config_button = QToolButton(toolbar_strip)
-        self._config_button.setObjectName("agentFlatControl")
-        self._config_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        toolbar_layout.addWidget(self._config_button)
-        toolbar_strip.setLayout(toolbar_layout)
-        layout.addWidget(toolbar_strip)
+        layout.addWidget(self._status_hint)
 
         composer_card = QFrame(self)
         composer_card.setObjectName("agentComposerCard")
         composer_layout = QVBoxLayout()
-        composer_layout.setContentsMargins(10, 8, 10, 8)
-        composer_layout.setSpacing(6)
+        composer_layout.setContentsMargins(6, 6, 6, 6)
+        composer_layout.setSpacing(4)
 
         self._attachment_bar = QWidget(composer_card)
         self._attachment_layout = QHBoxLayout()
         self._attachment_layout.setContentsMargins(0, 0, 0, 0)
-        self._attachment_layout.setSpacing(6)
+        self._attachment_layout.setSpacing(3)
         self._attachment_bar.setLayout(self._attachment_layout)
         self._attachment_bar.setVisible(False)
         composer_layout.addWidget(self._attachment_bar)
 
         self._composer = _ChatComposer(composer_card)
         self._composer.setObjectName("agentComposerEditor")
-        self._composer.setPlaceholderText("Ask a follow-up about the active binary. Ctrl+Enter to send.")
+        self._composer.setPlaceholderText("Ask a follow-up")
         self._composer.submit_requested.connect(self._on_send_clicked)
         composer_layout.addWidget(self._composer)
 
-        footer_meta_row = QHBoxLayout()
-        footer_meta_row.setContentsMargins(0, 0, 0, 0)
-        footer_meta_row.setSpacing(6)
+        footer_row = QHBoxLayout()
+        footer_row.setContentsMargins(0, 0, 0, 0)
+        footer_row.setSpacing(3)
 
         self._mode_button = QToolButton(composer_card)
-        self._mode_button.setObjectName("agentFlatControl")
+        self._mode_button.setObjectName("agentModeButton")
         self._mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        footer_meta_row.addWidget(self._mode_button)
+        footer_row.addWidget(self._mode_button)
 
         self._model_button = QToolButton(composer_card)
-        self._model_button.setObjectName("agentFlatControl")
-        self._model_button.clicked.connect(self.open_settings_requested.emit)
+        self._model_button.setObjectName("agentModelButton")
+        self._model_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._model_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        footer_meta_row.addWidget(self._model_button, 1)
+        footer_row.addWidget(self._model_button, 1)
 
         self._mention_button = QToolButton(composer_card)
-        self._mention_button.setObjectName("agentFooterButton")
+        self._mention_button.setObjectName("agentMentionButton")
         self._mention_button.setText("@")
         self._mention_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        footer_meta_row.addWidget(self._mention_button)
+        self._mention_button.setToolTip("Attach file, folder, or editor context")
+        footer_row.addWidget(self._mention_button)
 
-        self._prompt_button = QToolButton(composer_card)
-        self._prompt_button.setObjectName("agentFooterButton")
-        self._prompt_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
-        self._prompt_button.setIconSize(QSize(16, 16))
-        self._prompt_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        footer_meta_row.addWidget(self._prompt_button)
-        composer_layout.addLayout(footer_meta_row)
+        self._thinking_button = QToolButton(composer_card)
+        self._thinking_button.setObjectName("agentThinkingButton")
+        self._thinking_button.setText("💡")
+        self._thinking_button.setCheckable(True)
+        self._thinking_button.setToolTip("Enable deeper reasoning before answering")
+        self._thinking_button.toggled.connect(self._set_deep_thinking_enabled)
+        footer_row.addWidget(self._thinking_button)
+        footer_row.addStretch()
 
-        footer_action_row = QHBoxLayout()
-        footer_action_row.setContentsMargins(0, 0, 0, 0)
-        footer_action_row.setSpacing(6)
-
-        self._active_file_button = QPushButton("Active file", composer_card)
-        self._active_file_button.setObjectName("agentInlineToggle")
-        self._active_file_button.setCheckable(True)
-        self._active_file_button.setChecked(True)
-        self._active_file_button.toggled.connect(self._on_pin_active_file_toggled)
-        footer_action_row.addWidget(self._active_file_button)
-        footer_action_row.addStretch()
-
-        self._send_button = QPushButton("Enter", composer_card)
+        self._send_button = QPushButton("↩", composer_card)
         self._send_button.setObjectName("agentPrimaryButton")
         self._send_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._send_button.clicked.connect(self._on_send_clicked)
-        footer_action_row.addWidget(self._send_button)
+        footer_row.addWidget(self._send_button)
 
         self._stop_button = QPushButton("Stop", composer_card)
+        self._stop_button.setObjectName("agentStopButton")
         self._stop_button.clicked.connect(self._on_stop_clicked)
         self._stop_button.setEnabled(False)
         self._stop_button.setVisible(False)
         self._stop_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        footer_action_row.addWidget(self._stop_button)
+        footer_row.addWidget(self._stop_button)
 
-        composer_layout.addLayout(footer_action_row)
+        composer_layout.addLayout(footer_row)
         composer_card.setLayout(composer_layout)
         layout.addWidget(composer_card)
 
         self.setLayout(layout)
 
         self._build_mode_menu()
+        self._build_model_menu()
         self._build_attachment_menu()
-        self._build_context_menu()
-        self._build_prompt_menu()
-        self._build_config_menu()
         self._refresh_manual_attachment_chips()
 
     def _build_mode_menu(self) -> None:
         """Create the Chat/Agent selector used by the composer."""
         menu = QMenu(self)
+        self._add_menu_header(menu, "Mode")
+        menu.addSeparator()
         group = QActionGroup(menu)
         group.setExclusive(True)
 
@@ -638,96 +867,113 @@ class AIAgentPanel(QWidget):
             menu.addAction(action)
 
         self._mode_button.setMenu(menu)
-        self._mode_button.setText(self.MODE_LABELS[self._interaction_mode])
+        self._mode_button.setText(f"{self.MODE_LABELS[self._interaction_mode]} v")
+
+    def _build_model_menu(self) -> None:
+        """Create the model selector menu with an embedded config shortcut."""
+        menu = QMenu(self)
+        menu.aboutToShow.connect(self._populate_model_menu)
+        self._model_menu = menu
+        self._model_button.setMenu(menu)
+
+    def _populate_model_menu(self) -> None:
+        """Refresh the model selector using the current provider settings."""
+        if self._model_menu is None:
+            return
+
+        provider_key, current_model, model_options = self._available_model_options()
+        menu = self._model_menu
+        menu.clear()
+        self._add_menu_header(
+            menu,
+            self._config_badge_text(provider_key),
+            button_text="Config",
+            button_callback=self._emit_open_settings,
+        )
+        menu.addSeparator()
+
+        if not model_options:
+            empty_action = menu.addAction("Open settings to configure models")
+            empty_action.setEnabled(False)
+            return
+
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        for model_name in model_options:
+            action = QAction(model_name, menu)
+            action.setCheckable(True)
+            action.setChecked(model_name == current_model)
+            action.triggered.connect(
+                lambda checked=False, value=model_name: self._select_model(value)
+            )
+            group.addAction(action)
+            menu.addAction(action)
 
     def _build_attachment_menu(self) -> None:
-        """Create the Continue-style attachment menu shared by the file buttons."""
+        """Create the attachment menu shared by the @ button."""
         menu = QMenu(self)
         menu.aboutToShow.connect(self._populate_attachment_menu)
         self._attachment_menu = menu
+        self._mention_button.setMenu(menu)
 
-        for button in (self._attach_button, self._mention_button):
-            button.setMenu(menu)
-            button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    def _add_menu_header(
+        self,
+        menu: QMenu,
+        title: str,
+        *,
+        button_text: str = "",
+        button_callback=None,
+    ) -> None:
+        """Insert a compact menu header row with an optional action button."""
+        header = QWidget(menu)
+        header.setObjectName("agentMenuHeader")
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(4, 2, 4, 6)
+        header_layout.setSpacing(6)
 
-    def _build_context_menu(self) -> None:
-        """Create the menu for quick built-in editor contexts."""
-        menu = QMenu(self)
-        menu.aboutToShow.connect(self._populate_context_menu)
-        self._context_menu = menu
-        self._context_button.setMenu(menu)
-        self._context_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        title_label = QLabel(title, header)
+        title_label.setStyleSheet("font-weight: 700; color: #f3f3f4;")
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
 
-    def _build_prompt_menu(self) -> None:
-        """Create the prompt suggestion menu used by the footer and toolbar."""
-        menu = QMenu(self)
-        for label, prompt in self.PROMPT_SUGGESTIONS.items():
-            action = menu.addAction(label)
-            action.triggered.connect(lambda checked=False, text=prompt: self._apply_prompt_template(text))
-        self._prompt_menu = menu
-        for button in (self._preset_button, self._prompt_button):
-            button.setMenu(menu)
-            button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        if button_text and button_callback is not None:
+            button = QToolButton(header)
+            button.setObjectName("agentMenuHeaderButton")
+            button.setText(button_text)
+            button.clicked.connect(menu.close)
+            button.clicked.connect(button_callback)
+            header_layout.addWidget(button)
 
-    def _build_config_menu(self) -> None:
-        """Create the composer configuration dropdown."""
-        menu = QMenu(self)
+        header.setLayout(header_layout)
+        header_action = QWidgetAction(menu)
+        header_action.setDefaultWidget(header)
+        menu.addAction(header_action)
 
-        settings_action = menu.addAction("Open Settings...")
-        settings_action.triggered.connect(self.open_settings_requested.emit)
-        menu.addSeparator()
-
-        self._pin_active_file_action = menu.addAction("Pin Active File")
-        self._pin_active_file_action.setCheckable(True)
-        self._pin_active_file_action.setChecked(self._pin_active_file)
-        self._pin_active_file_action.toggled.connect(self._set_pin_active_file)
-
-        self._allow_navigation_action = menu.addAction("Allow Navigation Tools")
-        self._allow_navigation_action.setCheckable(True)
-        self._allow_navigation_action.setChecked(self._allow_navigation_tools)
-        self._allow_navigation_action.toggled.connect(self._set_allow_navigation_tools)
-
-        menu.addSeparator()
-        steps_menu = menu.addMenu("Max Steps")
-        steps_group = QActionGroup(steps_menu)
-        steps_group.setExclusive(True)
-        for value in self.MAX_STEPS_OPTIONS:
-            action = QAction(str(value), steps_menu)
-            action.setCheckable(True)
-            action.setChecked(value == self._max_steps)
-            action.triggered.connect(lambda checked=False, step_count=value: self._set_max_steps(step_count))
-            steps_group.addAction(action)
-            steps_menu.addAction(action)
-
-        self._config_button.setMenu(menu)
+    def _emit_open_settings(self) -> None:
+        """Open the full settings dialog from embedded composer controls."""
+        self.open_settings_requested.emit()
 
     def _set_interaction_mode(self, mode_key: str) -> None:
         """Update the composer mode shown in the Continue-style footer."""
         if mode_key not in self.MODE_LABELS:
             return
         self._interaction_mode = mode_key
-        self._mode_button.setText(self.MODE_LABELS[mode_key])
+        self._mode_button.setText(f"{self.MODE_LABELS[mode_key]} v")
         if mode_key == "agent":
-            self._status_hint.setText("Agent mode uses tools proactively.")
+            self._set_status_hint("Agent mode uses tools proactively.")
         else:
-            self._status_hint.setText("Chat mode answers directly unless tools are needed.")
+            self._set_status_hint("Chat mode answers directly unless tools are needed.")
 
     def _set_pin_active_file(self, checked: bool) -> None:
         """Toggle persistent active-file pinning for each turn."""
         self._pin_active_file = bool(checked)
-        self._active_file_button.blockSignals(True)
-        self._active_file_button.setChecked(self._pin_active_file)
-        self._active_file_button.blockSignals(False)
-        self._pin_active_file_action.blockSignals(True)
-        self._pin_active_file_action.setChecked(self._pin_active_file)
-        self._pin_active_file_action.blockSignals(False)
         self._refresh_context_controls()
 
     def _set_allow_navigation_tools(self, checked: bool) -> None:
         """Enable or disable navigation-oriented tools for new turns."""
         self._allow_navigation_tools = bool(checked)
         self._sync_runner_tool_policy()
-        self._status_hint.setText(
+        self._set_status_hint(
             "Navigation tools enabled." if self._allow_navigation_tools else "Navigation tools limited to explicit user requests."
         )
 
@@ -736,7 +982,135 @@ class AIAgentPanel(QWidget):
         self._max_steps = int(max_steps)
         if self._runner is not None:
             self._runner.set_max_steps(self._max_steps)
-        self._status_hint.setText(f"Ready · max {self._max_steps} steps")
+        self._set_status_hint(f"Max steps: {self._max_steps}")
+
+    def _set_deep_thinking_enabled(self, checked: bool) -> None:
+        """Toggle the composer-level deep-thinking hint."""
+        enabled = bool(checked)
+        self._deep_thinking_enabled = enabled
+        self._thinking_button.blockSignals(True)
+        self._thinking_button.setChecked(enabled)
+        self._thinking_button.blockSignals(False)
+        if enabled:
+            self._set_status_hint("Deep thinking enabled.")
+        elif not (self._runner and self._runner.is_running):
+            self._set_status_hint("")
+
+    def _get_app_settings(self) -> QSettings:
+        """Return application settings when available."""
+        app = QApplication.instance()
+        settings = getattr(app, "settings", None)
+        if isinstance(settings, QSettings):
+            return settings
+        if callable(settings):
+            candidate = settings()
+            if isinstance(candidate, QSettings):
+                return candidate
+        return QSettings("openhex", "openhex")
+
+    def _current_ai_settings(self) -> dict[str, Any]:
+        """Return the latest persisted AI settings snapshot."""
+        app = QApplication.instance()
+        current = getattr(app, "_ai_settings", None)
+        if isinstance(current, dict) and current:
+            return deepcopy(current)
+
+        configured = getattr(self._ai_manager, "_configured_settings", None)
+        if isinstance(configured, dict) and configured:
+            return deepcopy(configured)
+
+        return {
+            "enabled": True,
+            "provider": "local",
+            "local": {
+                "endpoint": "http://localhost:11434",
+                "model": self.LOCAL_MODEL_OPTIONS[0],
+                "temperature": 0.7,
+                "max_tokens": 4096,
+                "timeout": 60,
+            },
+            "cloud": {
+                "provider": "openai",
+                "api_key": "",
+                "base_url": "",
+                "model": self.CLOUD_MODEL_OPTIONS["openai"][0],
+                "temperature": 0.7,
+                "max_tokens": 4096,
+                "timeout": 60,
+            },
+        }
+
+    def _persist_ai_settings(self, settings: dict[str, Any]) -> None:
+        """Persist AI settings after quick model changes from the composer."""
+        snapshot = deepcopy(settings)
+        app = QApplication.instance()
+        if app is not None:
+            app._ai_settings = snapshot
+
+        app_settings = self._get_app_settings()
+        app_settings.setValue("ai_enabled", snapshot.get("enabled", True))
+        app_settings.setValue("ai_provider", snapshot.get("provider", "local"))
+        app_settings.setValue("ai_local_endpoint", snapshot.get("local", {}).get("endpoint", ""))
+        app_settings.setValue("ai_local_model", snapshot.get("local", {}).get("model", ""))
+        app_settings.setValue("ai_cloud_provider", snapshot.get("cloud", {}).get("provider", ""))
+        app_settings.setValue("ai_cloud_api_key", snapshot.get("cloud", {}).get("api_key", ""))
+        app_settings.setValue("ai_cloud_base_url", snapshot.get("cloud", {}).get("base_url", ""))
+        app_settings.setValue("ai_cloud_model", snapshot.get("cloud", {}).get("model", ""))
+
+        if self._ai_manager is not None:
+            self._ai_manager.configure(snapshot)
+
+        self.refresh_provider_status()
+
+    def _effective_provider_key(self, settings: Optional[dict[str, Any]] = None) -> str:
+        """Return the logical provider key backing the current model selector."""
+        snapshot = settings or self._current_ai_settings()
+        provider_key = str(snapshot.get("provider", "local") or "local").strip().lower()
+        if provider_key == "local":
+            return "local"
+        cloud_provider = str(
+            snapshot.get("cloud", {}).get("provider", provider_key) or provider_key
+        ).strip().lower()
+        return cloud_provider or "openai"
+
+    def _available_model_options(self) -> tuple[str, str, list[str]]:
+        """Return provider, current model, and model candidates for the selector."""
+        settings = self._current_ai_settings()
+        provider_key = self._effective_provider_key(settings)
+        if provider_key == "local":
+            current_model = str(settings.get("local", {}).get("model", "")).strip()
+            model_options = list(self.LOCAL_MODEL_OPTIONS)
+        else:
+            current_model = str(settings.get("cloud", {}).get("model", "")).strip()
+            model_options = list(
+                self.CLOUD_MODEL_OPTIONS.get(provider_key, self.CLOUD_MODEL_OPTIONS["openai"])
+            )
+
+        if current_model and current_model not in model_options:
+            model_options.insert(0, current_model)
+
+        return provider_key, current_model, model_options
+
+    def _config_badge_text(self, provider_key: str = "") -> str:
+        """Return the short config badge text shown at the top of the composer."""
+        effective_provider = provider_key or self._effective_provider_key()
+        return self.PROVIDER_CONFIG_LABELS.get(effective_provider, "AI Config")
+
+    def _select_model(self, model_name: str) -> None:
+        """Apply a model picked from the inline dropdown."""
+        value = str(model_name or "").strip()
+        if not value:
+            return
+
+        settings = self._current_ai_settings()
+        provider_key = self._effective_provider_key(settings)
+        if provider_key == "local":
+            settings.setdefault("local", {})["model"] = value
+        else:
+            settings.setdefault("cloud", {})["provider"] = provider_key
+            settings.setdefault("cloud", {})["model"] = value
+        self._persist_ai_settings(settings)
+        self._set_status_hint(f"Using {value}")
 
     def _current_context_snapshot(self) -> dict[str, Any]:
         """Collect a fresh context snapshot from the tool host when available."""
@@ -752,7 +1126,7 @@ class AIAgentPanel(QWidget):
         return payload if isinstance(payload, dict) else {}
 
     def _populate_attachment_menu(self) -> None:
-        """Refresh the dynamic attachment menu with open-file and context entries."""
+        """Refresh the dynamic attachment menu with file, folder, and editor context entries."""
         if self._attachment_menu is None:
             return
 
@@ -766,25 +1140,56 @@ class AIAgentPanel(QWidget):
         menu = self._attachment_menu
         menu.clear()
 
-        current_file_action = menu.addAction("Current File")
-        current_file_action.setEnabled(active_file is not None)
-        current_file_action.triggered.connect(lambda: self._attach_builtin_context("current_file"))
+        self._add_menu_header(menu, "Attach")
+        menu.addSeparator()
 
-        selection_action = menu.addAction("Selection")
-        selection_action.setEnabled(selection is not None)
-        selection_action.triggered.connect(lambda: self._attach_builtin_context("selection"))
+        add_file_action = menu.addAction("Add File...")
+        add_file_action.triggered.connect(self._choose_file_attachment)
 
-        row_action = menu.addAction("Current Row")
-        row_action.setEnabled(current_row is not None)
-        row_action.triggered.connect(lambda: self._attach_builtin_context("current_row"))
+        add_folder_action = menu.addAction("Add Folder...")
+        add_folder_action.triggered.connect(self._choose_folder_attachment)
 
-        structure_action = menu.addAction("Structure")
-        structure_action.setEnabled(bool(structure_configs.get("count", 0)))
-        structure_action.triggered.connect(lambda: self._attach_builtin_context("structure"))
+        has_editor_context = any(
+            [
+                active_file is not None,
+                selection is not None,
+                current_row is not None,
+                bool(structure_configs.get("count", 0)),
+                bool(open_files),
+            ]
+        )
+        if has_editor_context:
+            menu.addSeparator()
 
-        open_files_action = menu.addAction("Open Files Summary")
-        open_files_action.setEnabled(bool(open_files))
-        open_files_action.triggered.connect(lambda: self._attach_builtin_context("open_files"))
+            current_file_action = menu.addAction("Current File")
+            current_file_action.setEnabled(active_file is not None)
+            current_file_action.triggered.connect(
+                lambda: self._attach_builtin_context("current_file")
+            )
+
+            selection_action = menu.addAction("Selection")
+            selection_action.setEnabled(selection is not None)
+            selection_action.triggered.connect(
+                lambda: self._attach_builtin_context("selection")
+            )
+
+            row_action = menu.addAction("Current Row")
+            row_action.setEnabled(current_row is not None)
+            row_action.triggered.connect(
+                lambda: self._attach_builtin_context("current_row")
+            )
+
+            structure_action = menu.addAction("Structure")
+            structure_action.setEnabled(bool(structure_configs.get("count", 0)))
+            structure_action.triggered.connect(
+                lambda: self._attach_builtin_context("structure")
+            )
+
+            open_files_action = menu.addAction("Open Files Summary")
+            open_files_action.setEnabled(bool(open_files))
+            open_files_action.triggered.connect(
+                lambda: self._attach_builtin_context("open_files")
+            )
 
         if open_files:
             files_menu = menu.addMenu("Attach Open File")
@@ -800,33 +1205,6 @@ class AIAgentPanel(QWidget):
                 if target:
                     action.setToolTip(target)
 
-    def _populate_context_menu(self) -> None:
-        """Refresh the quick built-in context menu."""
-        if self._context_menu is None:
-            return
-
-        snapshot = self._current_context_snapshot()
-        active_file = snapshot.get("active_file")
-        selection = snapshot.get("selection")
-        current_row = snapshot.get("current_row")
-        structure_configs = snapshot.get("structure_configs") or {}
-        open_files = snapshot.get("open_files") or []
-
-        menu = self._context_menu
-        menu.clear()
-
-        entries = [
-            ("Current File", "current_file", active_file is not None),
-            ("Selection", "selection", selection is not None),
-            ("Current Row", "current_row", current_row is not None),
-            ("Structure", "structure", bool(structure_configs.get("count", 0))),
-            ("Open Files", "open_files", bool(open_files)),
-        ]
-        for label, kind, enabled in entries:
-            action = menu.addAction(label)
-            action.setEnabled(enabled)
-            action.triggered.connect(lambda checked=False, target_kind=kind: self._attach_builtin_context(target_kind))
-
     def _apply_prompt_template(self, prompt_text: str) -> None:
         """Replace or seed the composer with a suggested analysis prompt."""
         self._composer.setPlainText(str(prompt_text).strip())
@@ -841,17 +1219,6 @@ class AIAgentPanel(QWidget):
         structure_configs = snapshot.get("structure_configs") or {}
         open_files = snapshot.get("open_files") or []
 
-        active_label = "Active file"
-        active_tooltip = "Attach the active file to each turn."
-        if isinstance(active_file, dict):
-            active_name = str(active_file.get("file_name") or active_file.get("target") or "").strip()
-            if active_name:
-                active_label = "Active file"
-                active_tooltip = active_name
-
-        self._active_file_button.setText(active_label)
-        self._active_file_button.setToolTip(active_tooltip)
-        self._active_file_button.setEnabled(active_file is not None)
         has_context = (
             bool(active_file)
             or bool(selection)
@@ -859,19 +1226,17 @@ class AIAgentPanel(QWidget):
             or bool(structure_configs.get("count", 0))
             or bool(open_files)
         )
-        self._attach_button.setEnabled(has_context)
-        self._context_button.setEnabled(has_context)
-        self._mention_button.setEnabled(has_context)
-        self._prompt_button.setEnabled(True)
-        self._preset_button.setEnabled(True)
-        if hasattr(self, "_pin_active_file_action"):
-            self._pin_active_file_action.setEnabled(active_file is not None)
+        self._mention_button.setEnabled(True)
+        tooltip = "Attach file or folder"
+        if has_context:
+            tooltip += ", or reuse active editor context"
+        self._mention_button.setToolTip(tooltip)
 
     def _attach_builtin_context(self, kind: str) -> None:
         """Attach one of the built-in editor-context presets."""
         descriptor = self._builtin_attachment_descriptor(kind)
         if descriptor is None:
-            self._status_hint.setText("That context is not available right now.")
+            self._set_status_hint("That context is not available right now.")
             return
         self._add_manual_attachment(descriptor)
 
@@ -953,6 +1318,92 @@ class AIAgentPanel(QWidget):
             "prompt": prompt,
         }
 
+    def _choose_file_attachment(self) -> None:
+        """Open a file picker and add the selected path as an attachment chip."""
+        file_path, _filter_value = QFileDialog.getOpenFileName(self, "Attach File")
+        if not file_path:
+            return
+        descriptor = self._path_attachment_descriptor(file_path)
+        if descriptor is not None:
+            self._add_manual_attachment(descriptor)
+
+    def _choose_folder_attachment(self) -> None:
+        """Open a directory picker and add the selected folder as an attachment chip."""
+        folder_path = QFileDialog.getExistingDirectory(self, "Attach Folder")
+        if not folder_path:
+            return
+        descriptor = self._folder_attachment_descriptor(folder_path)
+        if descriptor is not None:
+            self._add_manual_attachment(descriptor)
+
+    def _path_attachment_descriptor(self, path_value: str) -> Optional[dict[str, str]]:
+        """Create an attachment descriptor for a local file path."""
+        path = Path(path_value).expanduser()
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+
+        if not resolved.is_file():
+            return None
+
+        snapshot = self._current_context_snapshot()
+        open_files = snapshot.get("open_files") or []
+        for file_info in open_files:
+            target = str(file_info.get("target") or "").strip()
+            if target and target == str(resolved):
+                return self._file_attachment_descriptor(file_info)
+
+        try:
+            file_size = resolved.stat().st_size
+        except OSError:
+            file_size = 0
+
+        label = resolved.name or str(resolved)
+        return {
+            "id": f"local-file:{resolved}",
+            "label": label,
+            "prompt": (
+                f'Attached local file path: "{resolved}" ({file_size} bytes). '
+                "If detailed byte inspection is needed and the file is not already open, ask the user to open it in the editor first."
+            ),
+        }
+
+    def _folder_attachment_descriptor(self, path_value: str) -> Optional[dict[str, str]]:
+        """Create an attachment descriptor for a local folder path."""
+        path = Path(path_value).expanduser()
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+
+        if not resolved.is_dir():
+            return None
+
+        try:
+            entries = sorted(resolved.iterdir(), key=lambda item: item.name.lower())
+        except OSError:
+            entries = []
+
+        entry_labels = [
+            f"{item.name}/" if item.is_dir() else item.name
+            for item in entries[:8]
+        ]
+        preview = ", ".join(entry_labels) if entry_labels else "empty"
+        if len(entries) > 8:
+            preview += ", ..."
+
+        label = f"{resolved.name or resolved}/"
+        return {
+            "id": f"local-folder:{resolved}",
+            "label": label,
+            "prompt": (
+                f'Attached local folder: "{resolved}". '
+                f"Visible entries: {preview}. "
+                "Use this as path context. If a specific file needs byte-level inspection, ask the user to open it in the editor."
+            ),
+        }
+
     def _add_manual_attachment(self, descriptor: dict[str, str]) -> None:
         """Add a context attachment chip unless it is already present."""
         attachment_id = str(descriptor.get("id", "")).strip()
@@ -964,7 +1415,7 @@ class AIAgentPanel(QWidget):
                 return
         self._manual_attachments.append(descriptor)
         self._refresh_manual_attachment_chips()
-        self._status_hint.setText(f'Attached "{descriptor.get("label", attachment_id)}"')
+        self._set_status_hint(f'Attached "{descriptor.get("label", attachment_id)}"')
         self.focus_input()
 
     def _remove_manual_attachment(self, attachment_id: str) -> None:
@@ -1024,6 +1475,11 @@ class AIAgentPanel(QWidget):
             control_lines.append("Prefer a direct answer when enough context already exists. Use tools only when needed.")
         else:
             control_lines.append("Use tools proactively when they will improve the analysis.")
+
+        if self._deep_thinking_enabled:
+            control_lines.append(
+                "Deep thinking is enabled. Reason through multiple plausible interpretations before finalizing the answer."
+            )
 
         if not self._allow_navigation_tools:
             control_lines.append(
@@ -1110,34 +1566,43 @@ class AIAgentPanel(QWidget):
         self._send_button.setVisible(not running)
         self._stop_button.setEnabled(running)
         self._stop_button.setVisible(running)
-        self._clear_button.setEnabled(not running)
         self._mode_button.setEnabled(not running)
         self._model_button.setEnabled(not running)
         self._mention_button.setEnabled(not running)
-        self._attach_button.setEnabled(not running)
-        self._context_button.setEnabled(not running)
-        self._preset_button.setEnabled(not running)
-        self._prompt_button.setEnabled(not running)
-        self._config_button.setEnabled(not running)
-        self._active_file_button.setEnabled(not running)
+        self._thinking_button.setEnabled(not running)
         self._attachment_bar.setEnabled(not running)
-        self._status_hint.setText("Running" if running else "Ready")
+        self._set_status_hint("Running" if running else "")
         if not running:
             self._refresh_context_controls()
 
     def _on_turn_finished(self, _result: str) -> None:
-        self._status_hint.setText("Ready")
+        self._set_status_hint("")
         self._refresh_context_controls()
 
     def _on_turn_failed(self, error_text: str) -> None:
         if error_text == "Agent turn cancelled.":
-            self._status_hint.setText("Cancelled")
+            self._set_status_hint("Cancelled")
         else:
-            self._status_hint.setText("Failed")
+            self._set_status_hint("Failed")
         self._refresh_context_controls()
 
     def _append_message(self, message: ChatMessage) -> None:
         self._placeholder.setVisible(False)
+        if message.kind in {"thinking", "tool_call", "tool_result"}:
+            if self._active_trace_card is None:
+                trace_card = _ThinkingTraceCard(self)
+                trace_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+                self._message_layout.insertWidget(
+                    max(0, self._message_layout.count() - 1),
+                    trace_card,
+                )
+                self._message_cards.append(trace_card)
+                self._active_trace_card = trace_card
+            self._active_trace_card.add_message(message)
+            QTimer.singleShot(0, self._scroll_to_bottom)
+            return
+
+        self._active_trace_card = None
         card = _MessageCard(message, self)
         card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._message_layout.insertWidget(max(0, self._message_layout.count() - 1), card)
