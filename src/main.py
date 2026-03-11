@@ -876,7 +876,7 @@ class OpenHexMainWindow(QMainWindow):
         for action, visible in (
             (
                 getattr(self, "_show_ai_panel_action", None),
-                self._hex_editor.is_right_panel_visible(),
+                ai_visible,
             ),
             (getattr(self, "_show_value_panel_action", None), value_visible),
             (getattr(self, "_show_structure_panel_action", None), structure_visible),

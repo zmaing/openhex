@@ -1798,18 +1798,8 @@ class HexEditorMainWindow(QWidget):
         )
 
     def toggle_ai_panel(self):
-        """Toggle the right-side panel container from the View menu."""
-        visible = not self.is_right_panel_visible()
-        self._set_side_panel_visibility(
-            self._right_panel,
-            2,
-            visible,
-            "_right_panel_width",
-            280,
-        )
-        if visible:
-            self._apply_right_panel_width_for_layout()
-            self._schedule_right_panel_width_restore()
+        """Toggle the AI side panel from the View menu."""
+        self.set_ai_panel_visible(not self.is_ai_panel_visible())
 
     def toggle_value_panel(self):
         """Toggle Value panel visibility inside the side panel container."""

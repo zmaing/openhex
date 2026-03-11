@@ -155,7 +155,7 @@ def test_save_status_message_stays_short():
 
 
 def test_view_panel_menu_toggles_affect_splitter_panels():
-    """View menu toggles should actually hide and show the file tree and AI panel."""
+    """View menu toggles should actually hide and show the file tree and AI subpanel."""
     app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
@@ -165,6 +165,7 @@ def test_view_panel_menu_toggles_affect_splitter_panels():
         editor = window._hex_editor
         file_tree_action = window._show_file_tree_action
         ai_panel_action = window._show_ai_panel_action
+        ai_label = editor._get_panel_label("ai")
 
         assert file_tree_action.isChecked()
         assert ai_panel_action.isChecked()
@@ -185,16 +186,67 @@ def test_view_panel_menu_toggles_affect_splitter_panels():
         assert editor._file_browser.isVisible()
         assert editor._splitter.sizes()[0] > 0
 
+        editor.set_value_panel_visible(True)
+        editor.set_structure_panel_visible(False)
+        editor.set_ai_panel_visible(True)
+        QTest.qWait(10)
+
+        assert ai_label in [editor._panel_tabs.tabText(i) for i in range(editor._panel_tabs.count())]
+
         ai_panel_action.trigger()
         QTest.qWait(10)
 
+        assert not editor.is_ai_panel_visible()
+        assert not ai_panel_action.isChecked()
+        assert editor._right_panel.isVisible()
+        assert ai_label not in [editor._panel_tabs.tabText(i) for i in range(editor._panel_tabs.count())]
+
+        ai_panel_action.trigger()
+        QTest.qWait(10)
+
+        assert editor.is_ai_panel_visible()
+        assert ai_panel_action.isChecked()
+        assert editor._right_panel.isVisible()
+        assert editor._splitter.sizes()[2] > 0
+        assert ai_label in [editor._panel_tabs.tabText(i) for i in range(editor._panel_tabs.count())]
+        assert editor._active_panel_id == "ai"
+    finally:
+        window.close()
+
+
+def test_right_panel_hides_when_last_side_panel_is_disabled():
+    """Disabling the last right-side panel should collapse the container until restored."""
+    app = OpenHexApp.instance()
+    window = OpenHexMainWindow()
+    window.show()
+    QTest.qWait(50)
+
+    try:
+        editor = window._hex_editor
+        ai_panel_action = window._show_ai_panel_action
+
+        editor.set_value_panel_visible(False)
+        editor.set_structure_panel_visible(False)
+        editor.set_ai_panel_visible(True)
+        QTest.qWait(10)
+
+        assert editor._right_panel.isVisible()
+        assert editor._splitter.sizes()[2] > 0
+        assert ai_panel_action.isChecked()
+
+        ai_panel_action.trigger()
+        QTest.qWait(10)
+
+        assert not editor.is_ai_panel_visible()
         assert not editor._right_panel.isVisible()
         assert editor._splitter.sizes()[2] == 0
 
         ai_panel_action.trigger()
         QTest.qWait(10)
 
+        assert editor.is_ai_panel_visible()
         assert editor._right_panel.isVisible()
         assert editor._splitter.sizes()[2] > 0
+        assert editor._active_panel_id == "ai"
     finally:
         window.close()
