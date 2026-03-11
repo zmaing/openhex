@@ -9,6 +9,7 @@ from .goto import GotoDialog
 from .ai_settings import AISettingsDialog
 from .batch_edit import BatchEditDialog
 from .checksum import ChecksumDialog
+from .filter_dialog import FilterDialog
 from .import_export import ImportExportDialog
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "AISettingsDialog",
     "BatchEditDialog",
     "ChecksumDialog",
+    "FilterDialog",
     "ImportExportDialog",
 ]

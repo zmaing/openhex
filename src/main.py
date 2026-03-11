@@ -129,6 +129,11 @@ class OpenHexMainWindow(QMainWindow):
         find_action.triggered.connect(self._on_find)
         edit_menu.addAction(find_action)
 
+        filter_action = QAction(tr("menu_filter"), self)
+        filter_action.setStatusTip("Filter rows in the current view" if self._get_current_language() == "en" else "过滤当前视图中的行")
+        filter_action.triggered.connect(self._on_filter)
+        edit_menu.addAction(filter_action)
+
         # Natural Language Search
         nl_search_action = QAction(tr("menu_ai_search"), self)
         nl_search_action.setShortcut("Ctrl+Shift+F")
@@ -441,6 +446,9 @@ class OpenHexMainWindow(QMainWindow):
         main_toolbar.addAction(self._get_icon("redo"), "", self._on_redo)
         main_toolbar.addSeparator()
         main_toolbar.addAction(self._get_icon("find"), "", self._on_find)
+        filter_toolbar_action = main_toolbar.addAction(self._get_icon("filter"), "", self._on_filter)
+        filter_toolbar_action.setToolTip(self._tr("menu_filter"))
+        filter_toolbar_action.setStatusTip("Filter rows in the current view" if self._get_current_language() == "en" else "过滤当前视图中的行")
         main_toolbar.addSeparator()
 
         # Arrangement parameter input
@@ -502,6 +510,7 @@ class OpenHexMainWindow(QMainWindow):
             "undo": "edit-undo",
             "redo": "edit-redo",
             "find": "edit-find",
+            "filter": "view-filter",
         }
         theme_name = icon_map.get(name)
 
@@ -585,6 +594,19 @@ class OpenHexMainWindow(QMainWindow):
             painter.setPen(pen)
             painter.drawEllipse(8, 8, 8, 8)
             painter.drawLine(14, 14, 19, 19)
+        elif name == "filter":
+            # Simple funnel icon
+            pen.setColor(QColor("#d7ba7d"))
+            painter.setPen(pen)
+            path = QPainterPath()
+            path.moveTo(5, 6)
+            path.lineTo(19, 6)
+            path.lineTo(14, 12)
+            path.lineTo(14, 18)
+            path.lineTo(10, 20)
+            path.lineTo(10, 12)
+            path.lineTo(5, 6)
+            painter.drawPath(path)
         else:
             # Default circle
             pen.setColor(QColor("#ffffff"))
@@ -631,6 +653,10 @@ class OpenHexMainWindow(QMainWindow):
     def _on_find(self):
         """Handle find action."""
         self._hex_editor.show_find_dialog()
+
+    def _on_filter(self):
+        """Handle row filter action."""
+        self._hex_editor.show_filter_dialog()
 
     def _on_nl_search(self):
         """Handle natural language search action."""

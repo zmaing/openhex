@@ -13,7 +13,10 @@ UserRole_HighlightRange = Qt.ItemDataRole.UserRole
 # Custom role for selection highlight range
 UserRole_SelectionRange = Qt.ItemDataRole.UserRole + 1
 
+import bisect
 import math
+
+from ...core.filter_engine import CompiledRowFilter, compile_row_filter
 
 
 class OffsetRulerWidget(QWidget):
@@ -1234,6 +1237,11 @@ class HexView(QTableView):
         self._column_end_byte_pos = -1    # Track end for column range selection
         self._block_start_byte_pos = -1  # Store start byte position for block/continuous selection  # Byte position for column selection
 
+        # Row filtering state
+        self._row_filters: list[str] = []
+        self._compiled_row_filters: list[CompiledRowFilter] = []
+        self._visible_rows: list[int] = []
+
         # Setup model and delegate
         self._model = HexTableModel(self)
         self.setModel(self._model)
@@ -1310,6 +1318,137 @@ class HexView(QTableView):
         visible_count = self._model.get_visible_byte_count()
         max_offset = self._model.get_max_horizontal_byte_offset()
         return max_offset, visible_count, max_offset > 0
+
+    def set_row_filters(self, filters: list[str]) -> None:
+        """Compile and apply row filters to the current view."""
+        clean_filters = [str(value).strip() for value in filters if str(value).strip()]
+        self._row_filters = clean_filters
+        self._compiled_row_filters = [compile_row_filter(expression) for expression in clean_filters]
+        self._apply_row_filters()
+
+    def clear_row_filters(self) -> None:
+        """Clear all active row filters."""
+        self._row_filters = []
+        self._compiled_row_filters = []
+        self._apply_row_filters()
+
+    def get_row_filters(self) -> list[str]:
+        """Return active row filters."""
+        return list(self._row_filters)
+
+    def get_visible_row_count(self) -> int:
+        """Return how many rows are currently visible after filtering."""
+        if not self._compiled_row_filters:
+            return self._model.rowCount()
+        return len(self._visible_rows)
+
+    def get_total_row_count(self) -> int:
+        """Return the total unfiltered row count."""
+        return self._model.rowCount()
+
+    def _row_data_for_filter(self, row: int) -> bytes:
+        """Return the data payload for a row, excluding any header bytes."""
+        _row_start, _row_end, data_start, data_end = self._model._get_row_bounds(row)
+        if data_end <= data_start:
+            return b""
+        return bytes(self._model._data[data_start:data_end])
+
+    def _row_matches_filters(self, row: int) -> bool:
+        """Return whether a row matches all active filters."""
+        if self._model._file_size == 0:
+            return True
+        row_data = self._row_data_for_filter(row)
+        if not row_data:
+            return False
+        return all(compiled.matches(row_data) for compiled in self._compiled_row_filters)
+
+    def _nearest_visible_row(self, row: int) -> int | None:
+        """Return the nearest visible row to the given raw row index."""
+        if not self._visible_rows:
+            return None
+
+        index = bisect.bisect_left(self._visible_rows, row)
+        candidates = []
+        if index < len(self._visible_rows):
+            candidates.append(self._visible_rows[index])
+        if index > 0:
+            candidates.append(self._visible_rows[index - 1])
+        if not candidates:
+            return None
+        return min(candidates, key=lambda candidate: abs(candidate - row))
+
+    def _find_row_for_offset(self, offset: int) -> int | None:
+        """Map a file offset to its raw row index."""
+        row_count = self._model.rowCount()
+        if row_count <= 0:
+            return None
+
+        offset = max(0, int(offset))
+        if self._model._arrangement_mode == "equal_frame":
+            bytes_per_row = max(1, self._model._bytes_per_row)
+            return min(row_count - 1, offset // bytes_per_row)
+
+        for row in range(row_count):
+            _row_start, _row_end, data_start, data_end = self._model._get_row_bounds(row)
+            if data_start <= offset < data_end:
+                return row
+            if offset < data_start:
+                return row
+        return row_count - 1
+
+    def _ensure_current_row_visible(self) -> None:
+        """Keep the current cursor and selection on a visible row after filtering."""
+        if not self._compiled_row_filters:
+            self._visible_rows = list(range(self._model.rowCount()))
+            return
+
+        if not self._visible_rows:
+            self.selectionModel().blockSignals(True)
+            self.selectionModel().clearSelection()
+            self.selectionModel().blockSignals(False)
+            self.clearSelection()
+            self.viewport().update()
+            return
+
+        current_index = self.currentIndex()
+        current_row = current_index.row() if current_index.isValid() else -1
+        if current_row >= 0 and not self.isRowHidden(current_row):
+            return
+
+        target_row = self._find_row_for_offset(self._cursor_byte_offset)
+        if target_row is None or self.isRowHidden(target_row):
+            target_row = self._visible_rows[0]
+            _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(target_row)
+            self._cursor_byte_offset = data_start
+            self._nibble_pos = 0
+
+        self.selectionModel().blockSignals(True)
+        self.selectionModel().clearSelection()
+        self.setCurrentIndex(self._model.index(target_row, min(self._cursor_column, 1)))
+        self.scrollTo(self._model.index(target_row, 0))
+        self.selectionModel().blockSignals(False)
+        self._update_delegate_cursor()
+        self.cursor_moved.emit(self._cursor_byte_offset)
+
+    def _apply_row_filters(self) -> None:
+        """Hide or show rows based on the active filter set."""
+        row_count = self._model.rowCount()
+        self._visible_rows = []
+
+        self.setUpdatesEnabled(False)
+        try:
+            for row in range(row_count):
+                visible = True
+                if self._compiled_row_filters:
+                    visible = self._row_matches_filters(row)
+                self.setRowHidden(row, not visible)
+                if visible:
+                    self._visible_rows.append(row)
+        finally:
+            self.setUpdatesEnabled(True)
+
+        self._ensure_current_row_visible()
+        self.viewport().update()
 
     def _ensure_cursor_visible(self):
         """Shift the shared horizontal window so the active byte stays visible."""
@@ -1486,8 +1625,19 @@ class HexView(QTableView):
 
     def _move_cursor_to_byte(self, byte_offset: int):
         """Move cursor to specified byte offset."""
-        bytes_per_row = self._model._bytes_per_row
-        row = byte_offset // bytes_per_row
+        row = self._find_row_for_offset(byte_offset)
+        if row is None:
+            return
+
+        if self._compiled_row_filters and self.isRowHidden(row):
+            visible_row = self._nearest_visible_row(row)
+            if visible_row is None:
+                return
+            row = visible_row
+            _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(row)
+            byte_offset = data_start
+
+        self._cursor_byte_offset = max(0, byte_offset)
         self._ensure_cursor_visible()
         
         # Block signals to prevent selection changes
@@ -2242,9 +2392,6 @@ class HexView(QTableView):
         # Load data
         self._reload_data()
 
-        # Resize columns based on bytes_per_row
-        self._resize_columns()
-
         # Auto-select first cell and set focus
         try:
             # Always set focus and initialize cursor, even for empty files
@@ -2275,6 +2422,7 @@ class HexView(QTableView):
             data = self._file_handle.read(0, self._file_handle.file_size)
             self._model.set_data(data)
             self._resize_columns()
+            self._apply_row_filters()
 
     def _on_data_changed(self, start, end):
         """Handle data change."""
@@ -2291,6 +2439,7 @@ class HexView(QTableView):
         """Set bytes per row for equal frame mode."""
         self._model.set_arrangement_mode("equal_frame", value)
         self._resize_columns()
+        self._apply_row_filters()
 
     def set_arrangement_mode(self, mode: str, param: int = 32):
         """Set arrangement mode.
@@ -2302,6 +2451,7 @@ class HexView(QTableView):
         """
         self._model.set_arrangement_mode(mode, param)
         self._resize_columns()
+        self._apply_row_filters()
 
     def set_display_mode(self, mode: str):
         """Set the display mode and refresh layout."""
@@ -2447,9 +2597,7 @@ class HexView(QTableView):
 
     def scrollToOffset(self, offset: int):
         """Scroll to specific offset."""
-        total_per_row = self._model._bytes_per_row + self._model._header_length
-        row = offset // total_per_row
-        self.scrollTo(self._model.index(row, 0))
+        self._move_cursor_to_byte(offset)
 
     def set_search_results(self, results, current_index=-1):
         """Set search results for highlighting."""

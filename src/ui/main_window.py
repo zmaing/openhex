@@ -14,6 +14,7 @@ from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 import os
 import hashlib
+import json
 
 from ..models.document import DocumentModel
 from ..models.file_handle import FileHandle, FileState
@@ -163,6 +164,53 @@ class HexEditorMainWindow(QWidget):
         abs_path = os.path.abspath(file_path)
         path_hash = hashlib.md5(abs_path.encode()).hexdigest()[:16]
         return f"file_layout/{path_hash}"
+
+    def _load_filter_condition_history(self) -> List[str]:
+        """Load historical row filter conditions from settings."""
+        s = self._get_settings()
+        raw = s.value("filters/condition_history", "[]", type=str)
+        try:
+            values = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+        if not isinstance(values, list):
+            return []
+        return [str(value).strip() for value in values if str(value).strip()]
+
+    def _save_filter_condition_history(self, history: List[str]) -> None:
+        """Persist row filter history to settings."""
+        s = self._get_settings()
+        clean_history = [str(value).strip() for value in history if str(value).strip()]
+        s.setValue("filters/condition_history", json.dumps(clean_history, ensure_ascii=False))
+
+    def _load_saved_filter_groups(self) -> dict[str, List[str]]:
+        """Load saved row filter groups from settings."""
+        s = self._get_settings()
+        raw = s.value("filters/saved_groups", "{}", type=str)
+        try:
+            values = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(values, dict):
+            return {}
+
+        result: dict[str, List[str]] = {}
+        for name, filters in values.items():
+            key = str(name).strip()
+            if not key or not isinstance(filters, list):
+                continue
+            result[key] = [str(value).strip() for value in filters if str(value).strip()]
+        return result
+
+    def _save_saved_filter_groups(self, groups: dict[str, List[str]]) -> None:
+        """Persist saved row filter groups to settings."""
+        s = self._get_settings()
+        payload = {
+            str(name).strip(): [str(value).strip() for value in filters if str(value).strip()]
+            for name, filters in groups.items()
+            if str(name).strip()
+        }
+        s.setValue("filters/saved_groups", json.dumps(payload, ensure_ascii=False))
 
     def _get_file_bytes_per_row(self, file_path: str) -> int:
         """Load bytes_per_row setting for a file from QSettings."""
@@ -1519,6 +1567,39 @@ class HexEditorMainWindow(QWidget):
         self._search_engine.search_finished.connect(self._on_search_finished)
 
         dialog.exec()
+
+    def show_filter_dialog(self):
+        """Show the row filter dialog for the active hex view."""
+        from .dialogs.filter_dialog import FilterDialog
+
+        hex_view = self._get_current_hex_view()
+        if not hex_view:
+            self._status_bar.showMessage(tr("filter_no_active_view"), 2000)
+            return
+
+        dialog = FilterDialog(
+            active_filters=hex_view.get_row_filters(),
+            condition_history=self._load_filter_condition_history(),
+            saved_groups=self._load_saved_filter_groups(),
+            parent=self,
+        )
+
+        accepted = dialog.exec() == dialog.DialogCode.Accepted
+        self._save_filter_condition_history(dialog.get_condition_history())
+        self._save_saved_filter_groups(dialog.get_saved_groups())
+
+        if not accepted:
+            return
+
+        filters = dialog.get_active_filters()
+        hex_view.set_row_filters(filters)
+
+        visible_rows = hex_view.get_visible_row_count()
+        total_rows = hex_view.get_total_row_count()
+        if filters:
+            self._status_bar.showMessage(tr("filter_status_applied", visible_rows, total_rows), 3000)
+        else:
+            self._status_bar.showMessage(tr("filter_status_cleared"), 3000)
 
     def show_nl_search_dialog(self):
         """Show natural language search dialog."""
