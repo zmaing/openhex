@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HexForge Automated Test - Core Functions Only
+openhex Automated Test - Core Functions Only
 """
 
 import sys
@@ -17,8 +17,8 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtTest import QTest
 from PyQt6.QtCore import QTimer
 
-from src.app import HexForgeApp
-from src.main import HexForgeMainWindow
+from src.app import OpenHexApp
+from src.main import OpenHexMainWindow
 
 
 def log(status, message):
@@ -31,7 +31,7 @@ def log(status, message):
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("HexForge Core Test")
+    print("openhex Core Test")
     print("=" * 60)
 
     passed = 0
@@ -41,7 +41,7 @@ def main():
         # Setup
         print("\n[1] Setting up application...")
         app = QApplication.instance() or QApplication(sys.argv)
-        window = HexForgeMainWindow()
+        window = OpenHexMainWindow()
         window.show()
         QTest.qWait(50)
         print("    Done.")

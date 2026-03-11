@@ -7,8 +7,13 @@ Hex and text search functionality.
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, pyqtSlot
 from typing import Optional, List, Tuple, Callable
 from enum import Enum, auto
+from pathlib import Path
 
 import re
+
+
+DEBUG_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "debug.log"
+DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 class SearchMode(Enum):
@@ -218,19 +223,16 @@ class SearchEngine(QObject):
 
     def _search_all_hex(self, pattern: str) -> List[SearchResult]:
         """Search all hex occurrences."""
-        import os
-        log_path = "/Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge/logs/debug.log"
-
-        with open(log_path, "a") as f:
+        with open(DEBUG_LOG_PATH, "a") as f:
             f.write(f"[SEARCH] _search_all_hex INPUT: pattern='{pattern}'\n")
 
         pattern = pattern.replace(' ', '').replace('-', '')
-        with open(log_path, "a") as f:
+        with open(DEBUG_LOG_PATH, "a") as f:
             f.write(f"[SEARCH] _search_all_hex cleaned: pattern='{pattern}'\n")
 
         if len(pattern) % 2 != 0:
             pattern = '0' + pattern
-            with open(log_path, "a") as f:
+            with open(DEBUG_LOG_PATH, "a") as f:
                 f.write(f"[SEARCH] _search_all_hex padded: pattern='{pattern}'\n")
 
         try:

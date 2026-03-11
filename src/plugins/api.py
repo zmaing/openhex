@@ -9,7 +9,7 @@ from .manager import PluginBase, PluginInfo
 
 class HexEditorPlugin(PluginBase):
     """
-    Base class for HexForge plugins.
+    Base class for openhex plugins.
 
     All plugins should inherit from this class.
     """

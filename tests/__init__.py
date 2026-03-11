@@ -1,1 +1,1 @@
-"""Tests package for HexForge."""
+"""Tests package for openhex."""

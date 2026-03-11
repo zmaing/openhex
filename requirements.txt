@@ -1,4 +1,4 @@
-# HexForge - AI Enhanced Binary Editor
+# openhex - AI Enhanced Binary Editor
 # Core dependencies
 PyQt6>=6.6.0
 

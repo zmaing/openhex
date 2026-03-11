@@ -14,16 +14,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QStyleOptionViewItem
 
-from src.app import HexForgeApp
+from src.app import OpenHexApp
 from src.core.data_model import DisplayMode
-from src.main import HexForgeMainWindow
+from src.main import OpenHexMainWindow
 from src.utils.i18n import get_language, set_language
 
 
 def test_display_mode_menu_is_exclusive():
     """Primary display modes are exclusive while ASCII stays independently toggleable."""
-    app = HexForgeApp.instance()
-    window = HexForgeMainWindow()
+    app = OpenHexApp.instance()
+    window = OpenHexMainWindow()
     window.show()
     window._hex_editor.new_file()
     QTest.qWait(50)
@@ -74,8 +74,8 @@ def test_display_mode_menu_is_exclusive():
 
 def test_file_tree_hover_text_replaces_info_tab():
     """The file browser exposes file metadata when hovering the file name."""
-    app = HexForgeApp.instance()
-    window = HexForgeMainWindow()
+    app = OpenHexApp.instance()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(50)
 
@@ -122,11 +122,11 @@ def test_file_tree_hover_text_replaces_info_tab():
 
 def test_save_status_message_stays_short():
     """Saving should show a short status message instead of a long filename-based string."""
-    app = HexForgeApp.instance()
+    app = OpenHexApp.instance()
     previous_language = get_language()
     set_language("zh")
 
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(50)
 
@@ -156,8 +156,8 @@ def test_save_status_message_stays_short():
 
 def test_view_panel_menu_toggles_affect_splitter_panels():
     """View menu toggles should actually hide and show the file tree and AI panel."""
-    app = HexForgeApp.instance()
-    window = HexForgeMainWindow()
+    app = OpenHexApp.instance()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(50)
 

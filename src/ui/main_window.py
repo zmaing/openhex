@@ -9,10 +9,12 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QS
                              QTextEdit, QToolButton, QButtonGroup)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QSettings, QTimer
 from typing import List
+from pathlib import Path
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 import os
 import hashlib
+import json
 
 from ..models.document import DocumentModel
 from ..models.file_handle import FileHandle, FileState
@@ -25,6 +27,11 @@ from ..utils.format import FormatUtils
 from ..utils.i18n import tr
 from ..ai import AIManager
 from .panels.data_value import DataValuePanel
+from .panels.structure_view import StructureViewPanel
+
+
+DEBUG_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "debug.log"
+DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _requires_save_as(doc: FileHandle | None) -> bool:
@@ -43,7 +50,7 @@ class HexEditorMainWindow(QWidget):
     file_opened = pyqtSignal(str)
     file_saved = pyqtSignal(str)
     cursor_changed = pyqtSignal(int)
-    side_panel_state_changed = pyqtSignal(bool, bool, str)
+    side_panel_state_changed = pyqtSignal(bool, bool, bool, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,6 +66,7 @@ class HexEditorMainWindow(QWidget):
         self._panel_visibility = {
             "value": True,
             "ai": True,
+            "structure": False,
         }
         self._panel_layout_mode = "tabs"
         self._active_panel_id = "value"
@@ -101,7 +109,7 @@ class HexEditorMainWindow(QWidget):
             candidate = settings()
             if isinstance(candidate, QSettings):
                 return candidate
-        return QSettings("HexForge", "HexForge")
+        return QSettings("openhex", "openhex")
 
     def _load_ai_settings(self):
         """Load AI settings from app settings."""
@@ -128,6 +136,7 @@ class HexEditorMainWindow(QWidget):
         s = self._get_settings()
         self._panel_visibility["value"] = s.value("side_panel/value_visible", True, type=bool)
         self._panel_visibility["ai"] = s.value("side_panel/ai_visible", True, type=bool)
+        self._panel_visibility["structure"] = s.value("side_panel/structure_visible", False, type=bool)
         layout_mode = s.value("side_panel/layout_mode", "tabs", type=str)
         if layout_mode == "split":
             layout_mode = "vertical"
@@ -145,6 +154,7 @@ class HexEditorMainWindow(QWidget):
         s = self._get_settings()
         s.setValue("side_panel/value_visible", self._panel_visibility["value"])
         s.setValue("side_panel/ai_visible", self._panel_visibility["ai"])
+        s.setValue("side_panel/structure_visible", self._panel_visibility["structure"])
         s.setValue("side_panel/layout_mode", self._panel_layout_mode)
         s.setValue("side_panel/active_panel", self._active_panel_id)
 
@@ -154,6 +164,53 @@ class HexEditorMainWindow(QWidget):
         abs_path = os.path.abspath(file_path)
         path_hash = hashlib.md5(abs_path.encode()).hexdigest()[:16]
         return f"file_layout/{path_hash}"
+
+    def _load_filter_condition_history(self) -> List[str]:
+        """Load historical row filter conditions from settings."""
+        s = self._get_settings()
+        raw = s.value("filters/condition_history", "[]", type=str)
+        try:
+            values = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+        if not isinstance(values, list):
+            return []
+        return [str(value).strip() for value in values if str(value).strip()]
+
+    def _save_filter_condition_history(self, history: List[str]) -> None:
+        """Persist row filter history to settings."""
+        s = self._get_settings()
+        clean_history = [str(value).strip() for value in history if str(value).strip()]
+        s.setValue("filters/condition_history", json.dumps(clean_history, ensure_ascii=False))
+
+    def _load_saved_filter_groups(self) -> dict[str, List[str]]:
+        """Load saved row filter groups from settings."""
+        s = self._get_settings()
+        raw = s.value("filters/saved_groups", "{}", type=str)
+        try:
+            values = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(values, dict):
+            return {}
+
+        result: dict[str, List[str]] = {}
+        for name, filters in values.items():
+            key = str(name).strip()
+            if not key or not isinstance(filters, list):
+                continue
+            result[key] = [str(value).strip() for value in filters if str(value).strip()]
+        return result
+
+    def _save_saved_filter_groups(self, groups: dict[str, List[str]]) -> None:
+        """Persist saved row filter groups to settings."""
+        s = self._get_settings()
+        payload = {
+            str(name).strip(): [str(value).strip() for value in filters if str(value).strip()]
+            for name, filters in groups.items()
+            if str(name).strip()
+        }
+        s.setValue("filters/saved_groups", json.dumps(payload, ensure_ascii=False))
 
     def _get_file_bytes_per_row(self, file_path: str) -> int:
         """Load bytes_per_row setting for a file from QSettings."""
@@ -382,9 +439,11 @@ class HexEditorMainWindow(QWidget):
 
         self._data_value = self._create_data_value_panel()
         self._ai_panel = self._create_ai_panel()
+        self._structure_panel = self._create_structure_panel()
         self._side_panels = {
             "value": self._data_value,
             "ai": self._ai_panel,
+            "structure": self._structure_panel,
         }
 
         layout.addWidget(self._right_panel_content)
@@ -494,11 +553,16 @@ class HexEditorMainWindow(QWidget):
         return {
             "value": tr("panel_value_tab"),
             "ai": tr("panel_ai_tab"),
+            "structure": tr("panel_structure_tab"),
         }.get(panel_id, panel_id.title())
 
     def _get_active_panel_ids(self) -> List[str]:
         """Return visible side panels in their display order."""
-        return [panel_id for panel_id in ("value", "ai") if self._panel_visibility.get(panel_id, False)]
+        return [
+            panel_id
+            for panel_id in ("value", "ai", "structure")
+            if self._panel_visibility.get(panel_id, False)
+        ]
 
     def _clear_layout(self, layout):
         """Detach all widgets from a layout."""
@@ -760,6 +824,7 @@ class HexEditorMainWindow(QWidget):
         self.side_panel_state_changed.emit(
             self._panel_visibility["ai"],
             self._panel_visibility["value"],
+            self._panel_visibility["structure"],
             self._panel_layout_mode,
         )
 
@@ -770,6 +835,10 @@ class HexEditorMainWindow(QWidget):
     def is_value_panel_visible(self) -> bool:
         """Return whether the Value panel is enabled in the side panel."""
         return self._panel_visibility["value"]
+
+    def is_structure_panel_visible(self) -> bool:
+        """Return whether the structure panel is enabled in the side panel."""
+        return self._panel_visibility["structure"]
 
     def side_panel_layout_mode(self) -> str:
         """Return the current side panel layout mode."""
@@ -846,6 +915,10 @@ class HexEditorMainWindow(QWidget):
     def _create_data_value_panel(self):
         """Create data value inspection panel."""
         return DataValuePanel(self)
+
+    def _create_structure_panel(self):
+        """Create structure parsing panel."""
+        return StructureViewPanel(self)
 
     def _create_ai_panel(self):
         """Create AI analysis panel."""
@@ -941,6 +1014,11 @@ class HexEditorMainWindow(QWidget):
         if hasattr(self, "_data_value"):
             self._data_value.clear_values()
 
+    def _reset_structure_panel(self):
+        """Clear the structure panel when no row data is available."""
+        if hasattr(self, "_structure_panel"):
+            self._structure_panel.clear_values()
+
     def _update_value_panel(self, offset: int):
         """Update the Value panel for the active document and byte offset."""
         doc = self._document_model.current_document
@@ -955,6 +1033,26 @@ class HexEditorMainWindow(QWidget):
 
         self._data_value.update_values(offset, data)
 
+    def _update_structure_panel(self, offset: int):
+        """Update the structure panel for the current cursor row."""
+        doc = self._document_model.current_document
+        hex_view = self._get_current_hex_view()
+        if not doc or not hex_view or offset < 0 or offset >= doc.file_size:
+            self._reset_structure_panel()
+            return
+
+        row_start, row_end = hex_view.get_data_bounds_for_offset(offset)
+        if row_end <= row_start:
+            self._reset_structure_panel()
+            return
+
+        data = doc.read(row_start, row_end - row_start)
+        if not data:
+            self._reset_structure_panel()
+            return
+
+        self._structure_panel.update_row_data(row_start, data)
+
     def _refresh_current_view_state(self):
         """Refresh status labels and value panel from the active editor."""
         hex_view = self._get_current_hex_view()
@@ -963,6 +1061,7 @@ class HexEditorMainWindow(QWidget):
             self._pos_label.setText(tr("status_offset", "0x00000000"))
             self._selection_label.setText(tr("status_selection", 0))
             self._reset_value_panel()
+            self._reset_structure_panel()
             return
 
         offset = hex_view.get_offset_at_cursor()
@@ -972,6 +1071,7 @@ class HexEditorMainWindow(QWidget):
         """Update side UI from the active cursor position."""
         self._pos_label.setText(tr("status_offset", f"0x{max(0, offset):08X}"))
         self._update_value_panel(offset)
+        self._update_structure_panel(offset)
         self.cursor_changed.emit(offset)
 
     def _on_selection_changed(self, start: int, end: int):
@@ -1468,6 +1568,39 @@ class HexEditorMainWindow(QWidget):
 
         dialog.exec()
 
+    def show_filter_dialog(self):
+        """Show the row filter dialog for the active hex view."""
+        from .dialogs.filter_dialog import FilterDialog
+
+        hex_view = self._get_current_hex_view()
+        if not hex_view:
+            self._status_bar.showMessage(tr("filter_no_active_view"), 2000)
+            return
+
+        dialog = FilterDialog(
+            active_filters=hex_view.get_row_filters(),
+            condition_history=self._load_filter_condition_history(),
+            saved_groups=self._load_saved_filter_groups(),
+            parent=self,
+        )
+
+        accepted = dialog.exec() == dialog.DialogCode.Accepted
+        self._save_filter_condition_history(dialog.get_condition_history())
+        self._save_saved_filter_groups(dialog.get_saved_groups())
+
+        if not accepted:
+            return
+
+        filters = dialog.get_active_filters()
+        hex_view.set_row_filters(filters)
+
+        visible_rows = hex_view.get_visible_row_count()
+        total_rows = hex_view.get_total_row_count()
+        if filters:
+            self._status_bar.showMessage(tr("filter_status_applied", visible_rows, total_rows), 3000)
+        else:
+            self._status_bar.showMessage(tr("filter_status_cleared"), 3000)
+
     def show_nl_search_dialog(self):
         """Show natural language search dialog."""
         from .dialogs.nl_search import NaturalLanguageSearchDialog
@@ -1484,16 +1617,13 @@ class HexEditorMainWindow(QWidget):
 
     def _on_find_next(self, pattern: str, mode: object):
         """Handle find next."""
-        import os
-        log_path = "/Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge/logs/debug.log"
-
-        with open(log_path, "a") as f:
+        with open(DEBUG_LOG_PATH, "a") as f:
             f.write(f"[MAIN] _on_find_next: pattern='{pattern}', mode='{mode}', type={type(mode)}\n")
             f.write(f"[MAIN] last: pattern='{self._last_search_pattern}', mode={self._last_search_mode}\n")
 
         doc = self._document_model.current_document
         if not doc:
-            with open(log_path, "a") as f:
+            with open(DEBUG_LOG_PATH, "a") as f:
                 f.write("[MAIN] No document\n")
             return
 
@@ -1575,18 +1705,15 @@ class HexEditorMainWindow(QWidget):
 
     def _go_to_result(self, index: int):
         """Go to search result at index."""
-        import os
-        log_path = "/Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge/logs/debug.log"
-
         if 0 <= index < len(self._search_results):
             result = self._search_results[index]
             self._current_result_index = index
-            with open(log_path, "a") as f:
+            with open(DEBUG_LOG_PATH, "a") as f:
                 f.write(f"[INFO] _go_to_result: offset={result.offset}, index={index}/{len(self._search_results)}\n")
 
             # Scroll to offset
             current_widget = self._tab_widget.currentWidget()
-            with open(log_path, "a") as f:
+            with open(DEBUG_LOG_PATH, "a") as f:
                 f.write(f"[INFO] current_widget: {current_widget}, type: {type(current_widget)}\n")
 
             if hasattr(current_widget, 'hex_view'):
@@ -1667,6 +1794,10 @@ class HexEditorMainWindow(QWidget):
         """Toggle Value panel visibility inside the side panel container."""
         self.set_value_panel_visible(not self.is_value_panel_visible())
 
+    def toggle_structure_panel(self):
+        """Toggle structure panel visibility inside the side panel container."""
+        self.set_structure_panel_visible(not self.is_structure_panel_visible())
+
     def set_ai_panel_visible(self, visible: bool):
         """Enable or disable the AI panel."""
         self._set_panel_visible("ai", visible)
@@ -1674,6 +1805,10 @@ class HexEditorMainWindow(QWidget):
     def set_value_panel_visible(self, visible: bool):
         """Enable or disable the Value panel."""
         self._set_panel_visible("value", visible)
+
+    def set_structure_panel_visible(self, visible: bool):
+        """Enable or disable the structure panel."""
+        self._set_panel_visible("structure", visible)
 
     def _set_panel_visible(self, panel_id: str, visible: bool):
         """Update a specific side panel visibility flag."""

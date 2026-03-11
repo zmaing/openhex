@@ -27,9 +27,9 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtTest import QTest
 from PyQt6.QtGui import QColor
 
-# Import HexForge modules
-from src.app import HexForgeApp
-from src.main import HexForgeMainWindow
+# Import openhex modules
+from src.app import OpenHexApp
+from src.main import OpenHexMainWindow
 from src.models.file_handle import FileHandle, FileState
 from src.models.undo_stack import ReplaceCommand, InsertCommand, DeleteCommand
 
@@ -80,7 +80,7 @@ def test_basic_modification(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -128,7 +128,7 @@ def test_save_clears_red(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -176,7 +176,7 @@ def test_multiple_modifications(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -222,7 +222,7 @@ def test_display_modes(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -279,7 +279,7 @@ def test_undo_redo(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -331,7 +331,7 @@ def test_delete_operation(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -379,7 +379,7 @@ def test_insert_operation(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -422,7 +422,7 @@ def test_boundary_conditions(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -465,7 +465,7 @@ def test_new_file(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 
@@ -498,7 +498,7 @@ def test_performance_large_file(stats):
     print("-" * 70)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = HexForgeMainWindow()
+    window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
 

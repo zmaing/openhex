@@ -1,7 +1,7 @@
 """
 Views Package
 
-View components for HexForge.
+View components for openhex.
 """
 
 from .hex_view import HexView, HexViewWidget, HexTableModel

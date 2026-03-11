@@ -1,5 +1,5 @@
 """
-HexForge Main Window
+openhex Main Window
 
 Main application window with menu bar, toolbar, and central widget.
 """
@@ -16,8 +16,8 @@ from .core.data_model import ArrangementMode
 from .utils.i18n import tr
 
 
-class HexForgeMainWindow(QMainWindow):
-    """Main window for HexForge application."""
+class OpenHexMainWindow(QMainWindow):
+    """Main window for openhex application."""
 
     def __init__(self):
         super().__init__()
@@ -29,7 +29,7 @@ class HexForgeMainWindow(QMainWindow):
 
     def _init_window(self):
         """Initialize window properties."""
-        self.setWindowTitle("HexForge - AI Enhanced Binary Editor")
+        self.setWindowTitle("openhex - AI Enhanced Binary Editor")
         self.resize(1200, 800)
         self.setMinimumSize(800, 600)
 
@@ -128,6 +128,11 @@ class HexForgeMainWindow(QMainWindow):
         find_action.setStatusTip("Find in file" if self._get_current_language() == "en" else "在文件中查找")
         find_action.triggered.connect(self._on_find)
         edit_menu.addAction(find_action)
+
+        filter_action = QAction(tr("menu_filter"), self)
+        filter_action.setStatusTip("Filter rows in the current view" if self._get_current_language() == "en" else "过滤当前视图中的行")
+        filter_action.triggered.connect(self._on_filter)
+        edit_menu.addAction(filter_action)
 
         # Natural Language Search
         nl_search_action = QAction(tr("menu_ai_search"), self)
@@ -266,6 +271,13 @@ class HexForgeMainWindow(QMainWindow):
         show_value_panel_action.triggered.connect(self._on_toggle_value_panel)
         view_menu.addAction(show_value_panel_action)
         self._show_value_panel_action = show_value_panel_action
+
+        show_structure_panel_action = QAction(self._tr("menu_structure_panel"), self)
+        show_structure_panel_action.setCheckable(True)
+        show_structure_panel_action.setChecked(False)
+        show_structure_panel_action.triggered.connect(self._on_toggle_structure_panel)
+        view_menu.addAction(show_structure_panel_action)
+        self._show_structure_panel_action = show_structure_panel_action
 
         # Folding submenu
         folding_menu = view_menu.addMenu(self._tr("menu_folding"))
@@ -413,7 +425,7 @@ class HexForgeMainWindow(QMainWindow):
         help_menu = menubar.addMenu("&Help")
 
         about_action = QAction("&About", self)
-        about_action.setStatusTip("About HexForge")
+        about_action.setStatusTip("About openhex")
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
 
@@ -422,46 +434,157 @@ class HexForgeMainWindow(QMainWindow):
         # Main toolbar
         main_toolbar = QToolBar("Main")
         main_toolbar.setMovable(False)
-        main_toolbar.setIconSize(QSize(24, 24))
+        main_toolbar.setFloatable(False)
+        main_toolbar.setIconSize(QSize(16, 16))
+        main_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        main_toolbar.setStyleSheet("""
+            QToolBar {
+                background: #2d2d30;
+                border: none;
+                border-bottom: 1px solid #1f1f1f;
+                spacing: 4px;
+                padding: 3px 8px;
+            }
+            QToolBar::separator {
+                width: 1px;
+                margin: 3px 6px;
+                background: #3f3f46;
+            }
+            QToolButton#toolbarButton {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 3px;
+                padding: 0;
+                min-width: 24px;
+                max-width: 24px;
+                min-height: 24px;
+                max-height: 24px;
+            }
+            QToolButton#toolbarButton:hover {
+                background: #3a3d41;
+                border-color: #45494e;
+            }
+            QToolButton#toolbarButton:pressed {
+                background: #41454b;
+                border-color: #4f555c;
+            }
+            QWidget#toolbarFieldGroup {
+                background: transparent;
+                border: none;
+            }
+            QLabel#toolbarLabel {
+                color: #cccccc;
+                background: transparent;
+                font-size: 11px;
+                font-weight: 500;
+                padding: 0 0 0 2px;
+            }
+            QSpinBox#toolbarSpinBox {
+                background: #1f1f1f;
+                color: #cccccc;
+                border: 1px solid #3c3c3c;
+                border-radius: 3px;
+                padding: 0 18px 0 6px;
+                min-width: 42px;
+                min-height: 24px;
+                selection-background-color: #094771;
+                selection-color: #ffffff;
+            }
+            QSpinBox#toolbarSpinBox:hover {
+                border-color: #4f4f56;
+            }
+            QSpinBox#toolbarSpinBox:focus {
+                border-color: #007fd4;
+            }
+            QSpinBox#toolbarSpinBox::up-button {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 12px;
+                height: 9px;
+                margin: 2px 3px 0 0;
+                border: none;
+                border-left: 1px solid #3c3c3c;
+                border-top-right-radius: 2px;
+                background: #252526;
+            }
+            QSpinBox#toolbarSpinBox::down-button {
+                subcontrol-origin: padding;
+                subcontrol-position: bottom right;
+                width: 12px;
+                height: 9px;
+                margin: 0 3px 2px 0;
+                border: none;
+                border-left: 1px solid #3c3c3c;
+                border-bottom-right-radius: 2px;
+                background: #252526;
+            }
+            QSpinBox#toolbarSpinBox::up-arrow,
+            QSpinBox#toolbarSpinBox::down-arrow {
+                width: 6px;
+                height: 6px;
+            }
+        """)
         self.addToolBar(main_toolbar)
 
-        # Add icon actions (icons will be loaded from theme)
-        main_toolbar.addAction(self._get_icon("new"), "", self._on_new_file)
-        main_toolbar.addAction(self._get_icon("open"), "", self._on_open_file)
-        main_toolbar.addAction(self._get_icon("save"), "", self._on_save_file)
+        # Add icon actions as explicit buttons so toolbar styling stays consistent.
+        main_toolbar.addWidget(self._create_toolbar_button("new", self._tr("menu_new"), self._on_new_file))
+        main_toolbar.addWidget(self._create_toolbar_button("open", self._tr("menu_open"), self._on_open_file))
+        main_toolbar.addWidget(self._create_toolbar_button("save", self._tr("menu_save"), self._on_save_file))
         main_toolbar.addSeparator()
-        main_toolbar.addAction(self._get_icon("undo"), "", self._on_undo)
-        main_toolbar.addAction(self._get_icon("redo"), "", self._on_redo)
+        main_toolbar.addWidget(self._create_toolbar_button("undo", self._tr("menu_undo"), self._on_undo))
+        main_toolbar.addWidget(self._create_toolbar_button("redo", self._tr("menu_redo"), self._on_redo))
         main_toolbar.addSeparator()
-        main_toolbar.addAction(self._get_icon("find"), "", self._on_find)
+        main_toolbar.addWidget(self._create_toolbar_button("find", self._tr("menu_find"), self._on_find))
+        self._filter_toolbar_button = self._create_toolbar_button("filter", self._tr("menu_filter"), self._on_filter)
+        self._filter_toolbar_button.setStatusTip("Filter rows in the current view" if self._get_current_language() == "en" else "过滤当前视图中的行")
+        main_toolbar.addWidget(self._filter_toolbar_button)
         main_toolbar.addSeparator()
 
         # Arrangement parameter input
-        from PyQt6.QtWidgets import QLabel, QSpinBox
-        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QLabel, QSpinBox, QAbstractSpinBox
 
         # Length label and input - used for both EQUAL_FRAME (bytes per row) and HEADER_LENGTH (header bytes)
+        field_group = QWidget()
+        field_group.setObjectName("toolbarFieldGroup")
+        field_layout = QHBoxLayout(field_group)
+        field_layout.setContentsMargins(0, 0, 0, 0)
+        field_layout.setSpacing(4)
+
         length_label = QLabel("长度:")
-        length_label.setStyleSheet("color: #cccccc;")
-        main_toolbar.addWidget(length_label)
+        length_label.setObjectName("toolbarLabel")
+        field_layout.addWidget(length_label)
 
         self._length_spinbox = QSpinBox()
+        self._length_spinbox.setObjectName("toolbarSpinBox")
         self._length_spinbox.setRange(1, 65535)
         self._length_spinbox.setValue(32)
-        self._length_spinbox.setMaximumWidth(80)
-        self._length_spinbox.setStyleSheet("""
-            QSpinBox {
-                background-color: #3c3c3c;
-                color: #cccccc;
-                border: 1px solid #555555;
-                padding: 2px;
-            }
-        """)
+        self._length_spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
+        self._length_spinbox.setFrame(False)
+        self._length_spinbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._length_spinbox.setMaximumWidth(64)
         self._length_spinbox.valueChanged.connect(self._on_arrangement_length_changed)
-        main_toolbar.addWidget(self._length_spinbox)
+        field_layout.addWidget(self._length_spinbox)
+        main_toolbar.addWidget(field_group)
 
         # Store references for updating
         self._toolbar_length_label = length_label
+        self._toolbar_length_group = field_group
+
+    def _create_toolbar_button(self, icon_name: str, tooltip: str, slot):
+        """Create a consistent toolbar button."""
+        from PyQt6.QtWidgets import QToolButton
+
+        button = QToolButton(self)
+        button.setObjectName("toolbarButton")
+        button.setAutoRaise(False)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setIcon(self._get_icon(icon_name))
+        button.setIconSize(QSize(16, 16))
+        button.setToolTip(tooltip)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(slot)
+        return button
 
     def _init_central_widget(self):
         """Initialize central widget with hex editor."""
@@ -471,6 +594,7 @@ class HexForgeMainWindow(QMainWindow):
         self._sync_side_panel_actions(
             self._hex_editor.is_ai_panel_visible(),
             self._hex_editor.is_value_panel_visible(),
+            self._hex_editor.is_structure_panel_visible(),
         )
 
     def _init_status_bar(self):
@@ -494,6 +618,7 @@ class HexForgeMainWindow(QMainWindow):
             "undo": "edit-undo",
             "redo": "edit-redo",
             "find": "edit-find",
+            "filter": "view-filter",
         }
         theme_name = icon_map.get(name)
 
@@ -514,15 +639,17 @@ class HexForgeMainWindow(QMainWindow):
         pen = QPen()
         pen.setWidth(2)
 
+        stroke_color = QColor("#cccccc")
+
         if name == "new":
             # Plus icon
-            pen.setColor(QColor("#4ec9b0"))
+            pen.setColor(stroke_color)
             painter.setPen(pen)
             painter.drawLine(12, 5, 12, 19)
             painter.drawLine(5, 12, 19, 12)
         elif name == "open":
             # Folder icon
-            pen.setColor(QColor("#3794ff"))
+            pen.setColor(stroke_color)
             painter.setPen(pen)
             path = QPainterPath()
             path.moveTo(4, 8)
@@ -535,7 +662,7 @@ class HexForgeMainWindow(QMainWindow):
             painter.drawLine(4, 8, 12, 4)
         elif name == "save":
             # Save icon (arrow down to disk)
-            pen.setColor(QColor("#4ec9b0"))
+            pen.setColor(stroke_color)
             painter.setPen(pen)
             # Disk outline
             path = QPainterPath()
@@ -551,7 +678,7 @@ class HexForgeMainWindow(QMainWindow):
             painter.drawLine(15, 12, 12, 15)
         elif name == "undo":
             # Undo arrow
-            pen.setColor(QColor("#ce9178"))
+            pen.setColor(stroke_color)
             painter.setPen(pen)
             path = QPainterPath()
             path.moveTo(16, 6)
@@ -562,7 +689,7 @@ class HexForgeMainWindow(QMainWindow):
             painter.drawLine(8, 12, 12, 16)
         elif name == "redo":
             # Redo arrow
-            pen.setColor(QColor("#ce9178"))
+            pen.setColor(stroke_color)
             painter.setPen(pen)
             path = QPainterPath()
             path.moveTo(8, 6)
@@ -573,13 +700,26 @@ class HexForgeMainWindow(QMainWindow):
             painter.drawLine(16, 12, 12, 16)
         elif name == "find":
             # Magnifying glass
-            pen.setColor(QColor("#dcdcaa"))
+            pen.setColor(stroke_color)
             painter.setPen(pen)
             painter.drawEllipse(8, 8, 8, 8)
             painter.drawLine(14, 14, 19, 19)
+        elif name == "filter":
+            # Simple funnel icon
+            pen.setColor(stroke_color)
+            painter.setPen(pen)
+            path = QPainterPath()
+            path.moveTo(5, 6)
+            path.lineTo(19, 6)
+            path.lineTo(14, 12)
+            path.lineTo(14, 18)
+            path.lineTo(10, 20)
+            path.lineTo(10, 12)
+            path.lineTo(5, 6)
+            painter.drawPath(path)
         else:
             # Default circle
-            pen.setColor(QColor("#ffffff"))
+            pen.setColor(stroke_color)
             painter.setPen(pen)
             painter.drawEllipse(6, 6, 12, 12)
 
@@ -623,6 +763,10 @@ class HexForgeMainWindow(QMainWindow):
     def _on_find(self):
         """Handle find action."""
         self._hex_editor.show_find_dialog()
+
+    def _on_filter(self):
+        """Handle row filter action."""
+        self._hex_editor.show_filter_dialog()
 
     def _on_nl_search(self):
         """Handle natural language search action."""
@@ -708,15 +852,31 @@ class HexForgeMainWindow(QMainWindow):
         """Toggle Value panel."""
         self._hex_editor.toggle_value_panel()
 
-    def _on_side_panel_state_changed(self, ai_visible: bool, value_visible: bool, layout_mode: str):
-        """Sync menu check states with the embedded side panel controls."""
-        self._sync_side_panel_actions(ai_visible, value_visible)
+    def _on_toggle_structure_panel(self):
+        """Toggle structure panel."""
+        self._hex_editor.toggle_structure_panel()
 
-    def _sync_side_panel_actions(self, ai_visible: bool, value_visible: bool):
+    def _on_side_panel_state_changed(
+        self,
+        ai_visible: bool,
+        value_visible: bool,
+        structure_visible: bool,
+        layout_mode: str,
+    ):
+        """Sync menu check states with the embedded side panel controls."""
+        self._sync_side_panel_actions(ai_visible, value_visible, structure_visible)
+
+    def _sync_side_panel_actions(
+        self,
+        ai_visible: bool,
+        value_visible: bool,
+        structure_visible: bool,
+    ):
         """Update panel menu actions without retriggering toggles."""
         for action, visible in (
             (getattr(self, "_show_ai_panel_action", None), ai_visible),
             (getattr(self, "_show_value_panel_action", None), value_visible),
+            (getattr(self, "_show_structure_panel_action", None), structure_visible),
         ):
             if action is None:
                 continue
@@ -805,7 +965,7 @@ class HexForgeMainWindow(QMainWindow):
         set_language(lang)
 
         # Save to settings - use QSettings directly
-        s = QSettings("HexForge", "HexForge")
+        s = QSettings("openhex", "openhex")
         s.setValue("language", lang)
         s.sync()
 
@@ -839,8 +999,8 @@ class HexForgeMainWindow(QMainWindow):
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.about(
             self,
-            "About HexForge",
-            "<h1>HexForge</h1>"
+            "About openhex",
+            "<h1>openhex</h1>"
             "<p>Version 1.0.0</p>"
             "<p>AI Enhanced Binary Editor</p>"
             "<p>Built with PyQt6</p>"

@@ -1,7 +1,7 @@
 """
 Styles
 
-Stylesheet definitions for HexForge.
+Stylesheet definitions for openhex.
 """
 
 from .theme import Theme

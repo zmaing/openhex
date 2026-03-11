@@ -1,139 +1,672 @@
 """
-Structure View
-
-结构化视图 - 显示解析后的数据结构
+Structure parsing side panel driven by user-defined C structs.
 """
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
-                             QLabel, QComboBox, QPushButton, QGroupBox)
-from PyQt6.QtCore import Qt
+from __future__ import annotations
 
-from ...core.parser.template_manager import TemplateManager
+import json
+
+from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QButtonGroup,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QRadioButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ...core.parser.c_struct import CStructDefinition, decode_c_struct, parse_c_struct_definition
+from ...utils.i18n import tr
 
 
-class StructureViewPanel(QWidget):
-    """
-    Structure view panel.
+class NewStructureConfigDialog(QDialog):
+    """Dialog for creating a new structure parsing config."""
 
-    Displays parsed binary structure using templates.
-    """
-
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        title: str | None = None,
+        initial_name: str = "",
+        initial_definition: str = "",
+    ):
         super().__init__(parent)
-        self._data = None
-        self._template_manager = TemplateManager(self)
+        self.setWindowTitle(title or tr("panel_structure_new_title"))
+        self.resize(520, 360)
+        self._initial_name = initial_name
+        self._initial_definition = initial_definition
         self._init_ui()
 
     def _init_ui(self):
-        """Initialize UI."""
+        """Build the dialog layout."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
 
-        # Template selection
-        group = QGroupBox("Structure Template")
-        group_layout = QVBoxLayout()
+        layout.addWidget(QLabel(tr("panel_structure_name")))
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText(tr("panel_structure_name_placeholder"))
+        self._name_edit.setText(self._initial_name)
+        layout.addWidget(self._name_edit)
 
-        self._template_combo = QComboBox()
-        self._template_combo.addItems(self._template_manager.get_template_names())
-        self._template_combo.currentTextChanged.connect(self._on_template_changed)
-        group_layout.addWidget(self._template_combo)
+        layout.addWidget(QLabel(tr("panel_structure_definition")))
+        self._definition_edit = QPlainTextEdit()
+        self._definition_edit.setPlaceholderText(tr("panel_structure_definition_placeholder"))
+        self._definition_edit.setPlainText(self._initial_definition)
+        self._definition_edit.setStyleSheet(
+            """
+            QPlainTextEdit {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                border: 1px solid #3c3c3c;
+                font-family: 'Menlo', 'Consolas', monospace;
+            }
+            """
+        )
+        layout.addWidget(self._definition_edit, 1)
 
-        # Auto-detect button
-        auto_btn = QPushButton("Auto-Detect")
-        auto_btn.clicked.connect(self._on_auto_detect)
-        group_layout.addWidget(auto_btn)
-
-        group.setLayout(group_layout)
-        layout.addWidget(group)
-
-        # Structure tree
-        self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["Field", "Value", "Description"])
-        self._tree.setColumnWidth(0, 150)
-        self._tree.setColumnWidth(1, 150)
-        layout.addWidget(self._tree)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if ok_button is not None:
+            ok_button.setText(tr("panel_structure_confirm"))
+        if cancel_button is not None:
+            cancel_button.setText(tr("panel_structure_cancel"))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
         self.setLayout(layout)
 
-    def set_data(self, data: bytes):
-        """Set data to parse."""
-        self._data = data
-        self._on_template_changed(self._template_combo.currentText())
+    def config_name(self) -> str:
+        """Return the entered config name."""
+        return self._name_edit.text().strip()
 
-    def _on_template_changed(self, template_name: str):
-        """Handle template selection changed."""
-        self._tree.clear()
+    def definition_text(self) -> str:
+        """Return the entered C struct definition."""
+        return self._definition_edit.toPlainText().strip()
 
-        if not self._data:
+
+class StructureConfigManagerDialog(QDialog):
+    """Dialog for editing and deleting saved structure configs."""
+
+    def __init__(self, panel: "StructureViewPanel", parent=None):
+        super().__init__(parent or panel)
+        self._panel = panel
+        self.setWindowTitle(tr("panel_structure_manage_title"))
+        self.resize(520, 380)
+        self._init_ui()
+        self.refresh()
+
+    def _init_ui(self):
+        """Build the manager dialog layout."""
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        layout.addWidget(QLabel(tr("panel_structure_manage_saved")))
+
+        self._config_list = QListWidget()
+        self._config_list.itemDoubleClicked.connect(self._on_edit_clicked)
+        self._config_list.currentItemChanged.connect(self._on_selection_changed)
+        self._config_list.setStyleSheet(
+            """
+            QListWidget {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                border: 1px solid #3c3c3c;
+            }
+            """
+        )
+        layout.addWidget(self._config_list, 1)
+
+        button_row = QHBoxLayout()
+        button_row.setContentsMargins(0, 0, 0, 0)
+        button_row.setSpacing(8)
+
+        self._edit_button = QPushButton(tr("panel_structure_edit"))
+        self._edit_button.clicked.connect(self._on_edit_clicked)
+        button_row.addWidget(self._edit_button)
+
+        self._delete_button = QPushButton(tr("panel_structure_delete"))
+        self._delete_button.clicked.connect(self._on_delete_clicked)
+        button_row.addWidget(self._delete_button)
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_button = buttons.button(QDialogButtonBox.StandardButton.Close)
+        if close_button is not None:
+            close_button.setText(tr("btn_close"))
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+        self.setLayout(layout)
+
+    def refresh(self):
+        """Refresh the list of saved configs."""
+        selected_name = None
+        current_item = self._config_list.currentItem()
+        if current_item is not None:
+            selected_name = current_item.data(Qt.ItemDataRole.UserRole)
+
+        self._config_list.clear()
+        for config in self._panel.configs():
+            item = QListWidgetItem(str(config["name"]))
+            item.setData(Qt.ItemDataRole.UserRole, str(config["name"]))
+            self._config_list.addItem(item)
+
+        if self._config_list.count():
+            target_name = selected_name or self._panel.selected_config_name()
+            for row in range(self._config_list.count()):
+                item = self._config_list.item(row)
+                if item.data(Qt.ItemDataRole.UserRole) == target_name:
+                    self._config_list.setCurrentRow(row)
+                    break
+            if self._config_list.currentRow() < 0:
+                self._config_list.setCurrentRow(0)
+
+        self._on_selection_changed(self._config_list.currentItem(), None)
+
+    def _selected_name(self) -> str:
+        """Return the currently selected config name."""
+        item = self._config_list.currentItem()
+        if item is None:
+            return ""
+        data = item.data(Qt.ItemDataRole.UserRole)
+        return str(data) if data else ""
+
+    def _on_selection_changed(self, current: QListWidgetItem | None, previous: QListWidgetItem | None):
+        """Enable or disable action buttons based on selection."""
+        has_selection = current is not None
+        self._edit_button.setEnabled(has_selection)
+        self._delete_button.setEnabled(has_selection)
+
+    def _on_edit_clicked(self, item: QListWidgetItem | None = None):
+        """Edit the currently selected config."""
+        name = self._selected_name()
+        if not name:
             return
 
-        template = self._template_manager.get_template(template_name)
-        if not template:
+        while True:
+            config = self._panel.get_config(name)
+            if config is None:
+                self.refresh()
+                return
+
+            dialog = NewStructureConfigDialog(
+                self,
+                title=tr("panel_structure_edit_title"),
+                initial_name=str(config["name"]),
+                initial_definition=str(config["definition"]),
+            )
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            try:
+                updated_name = self._panel.update_config(
+                    name,
+                    dialog.config_name(),
+                    dialog.definition_text(),
+                )
+                self.refresh()
+                for row in range(self._config_list.count()):
+                    list_item = self._config_list.item(row)
+                    if list_item.data(Qt.ItemDataRole.UserRole) == updated_name:
+                        self._config_list.setCurrentRow(row)
+                        break
+                return
+            except ValueError as exc:
+                QMessageBox.warning(self, tr("panel_structure_edit_title"), str(exc))
+
+    def _on_delete_clicked(self):
+        """Delete the currently selected config after confirmation."""
+        name = self._selected_name()
+        if not name:
             return
 
-        # Parse data using template
-        self._parse_template(template)
-
-    def _parse_template(self, template):
-        """Parse data using template."""
-        if not self._data:
+        result = QMessageBox.question(
+            self,
+            tr("panel_structure_manage_title"),
+            tr("panel_structure_delete_confirm", name),
+        )
+        if result != QMessageBox.StandardButton.Yes:
             return
 
-        # Add root item
-        root = QTreeWidgetItem([template.name, "", template.description or ""])
-        self._tree.addTopLevelItem(root)
+        self._panel.delete_config(name)
+        self.refresh()
 
-        # Add field items
-        for field in template.fields:
-            offset = field.get("offset", 0)
-            size = field.get("size", 0)
-            field_type = field.get("type", "bytes")
-            name = field.get("name", "")
-            desc = field.get("desc", "")
 
-            # Read value
-            value = self._read_value(offset, size, field_type)
+class StructureViewPanel(QWidget):
+    """Parse the current row using a saved C struct definition."""
 
-            item = QTreeWidgetItem([name, value, desc])
-            item.setData(0, Qt.ItemDataRole.UserRole, offset)
-            root.addChild(item)
+    CONFIGS_KEY = "structure_parser/configs"
+    SELECTED_KEY = "structure_parser/selected_config"
 
-        root.setExpanded(True)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._configs: list[dict[str, object]] = []
+        self._current_config_name = ""
+        self._current_definition: CStructDefinition | None = None
+        self._current_row_offset = 0
+        self._current_row_data = b""
+        self._display_base = "hex"
+        self._value_font = QFont("Menlo", 10)
+        self._value_font.setStyleHint(QFont.StyleHint.Monospace)
+        self._init_ui()
+        self._load_configs()
+        self._refresh_config_combo()
+        self.clear_values()
 
-    def _read_value(self, offset: int, size: int, field_type: str) -> str:
-        """Read and format value."""
-        if offset + size > len(self._data):
-            return "(out of range)"
+    def _init_ui(self):
+        """Initialize panel UI."""
+        self.setObjectName("structureViewPanel")
+        self.setStyleSheet(
+            """
+            QWidget#structureViewPanel {
+                background-color: #252526;
+                color: #cccccc;
+            }
+            QWidget#structureViewPanel QLabel {
+                background-color: transparent;
+                color: #cccccc;
+                border: none;
+            }
+            QWidget#structureViewPanel QComboBox,
+            QWidget#structureViewPanel QLineEdit {
+                background-color: #2d2d30;
+                color: #cccccc;
+                border: 1px solid #3c3c3c;
+                padding: 4px 6px;
+            }
+            QWidget#structureViewPanel QComboBox::drop-down {
+                border: none;
+            }
+            QWidget#structureViewPanel QRadioButton {
+                color: #cccccc;
+                spacing: 6px;
+            }
+            QWidget#structureViewPanel QRadioButton::indicator {
+                width: 14px;
+                height: 14px;
+            }
+            """
+        )
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        title = QLabel(tr("panel_structure_title"))
+        title.setStyleSheet("font-weight: bold; color: #cccccc;")
+        layout.addWidget(title)
+
+        offset_row = QHBoxLayout()
+        offset_row.setContentsMargins(0, 0, 0, 0)
+        offset_row.setSpacing(6)
+        offset_row.addWidget(QLabel(tr("panel_structure_offset")))
+        self._offset_value = QLabel("0x00000000")
+        self._offset_value.setFont(self._value_font)
+        offset_row.addWidget(self._offset_value)
+        offset_row.addStretch()
+        layout.addLayout(offset_row)
+
+        display_row = QHBoxLayout()
+        display_row.setContentsMargins(0, 0, 0, 0)
+        display_row.setSpacing(8)
+        display_row.addWidget(QLabel(tr("panel_structure_display")))
+        self._hex_radio = QRadioButton(tr("panel_structure_hex"))
+        self._decimal_radio = QRadioButton(tr("panel_structure_decimal"))
+        self._display_group = QButtonGroup(self)
+        self._display_group.setExclusive(True)
+        self._display_group.addButton(self._hex_radio)
+        self._display_group.addButton(self._decimal_radio)
+        self._hex_radio.setChecked(True)
+        self._hex_radio.toggled.connect(self._on_display_mode_changed)
+        self._decimal_radio.toggled.connect(self._on_display_mode_changed)
+        display_row.addWidget(self._hex_radio)
+        display_row.addWidget(self._decimal_radio)
+        display_row.addStretch()
+        layout.addLayout(display_row)
+
+        self._table = QTableWidget(0, 2, self)
+        self._table.setHorizontalHeaderLabels(
+            [tr("panel_structure_field"), tr("panel_structure_value")]
+        )
+        self._table.verticalHeader().setVisible(False)
+        self._table.setAlternatingRowColors(True)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._table.setShowGrid(False)
+        self._table.setStyleSheet(
+            """
+            QTableWidget {
+                background-color: #252526;
+                color: #cccccc;
+                alternate-background-color: #2d2d30;
+                border: 1px solid #3c3c3c;
+            }
+            QHeaderView::section {
+                background-color: #2d2d30;
+                color: #cccccc;
+                padding: 4px 6px;
+                border: none;
+                border-bottom: 1px solid #3c3c3c;
+            }
+            """
+        )
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self._table, 1)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("color: #3c3c3c;")
+        layout.addWidget(divider)
+
+        config_row = QHBoxLayout()
+        config_row.setContentsMargins(0, 0, 0, 0)
+        config_row.setSpacing(8)
+        config_row.addWidget(QLabel(tr("panel_structure_config")))
+        self._config_combo = QComboBox()
+        self._config_combo.activated.connect(self._on_config_activated)
+        config_row.addWidget(self._config_combo, 1)
+        layout.addLayout(config_row)
+
+        self.setLayout(layout)
+
+    def _get_settings(self) -> QSettings:
+        """Return application settings when available."""
+        app = QApplication.instance()
+        settings = getattr(app, "settings", None)
+        if isinstance(settings, QSettings):
+            return settings
+        if callable(settings):
+            candidate = settings()
+            if isinstance(candidate, QSettings):
+                return candidate
+        return QSettings("openhex", "openhex")
+
+    def _load_configs(self):
+        """Load saved structure configs from settings."""
+        settings = self._get_settings()
+        raw_value = settings.value(self.CONFIGS_KEY, "[]")
+        if isinstance(raw_value, str):
+            try:
+                serialized = json.loads(raw_value)
+            except json.JSONDecodeError:
+                serialized = []
+        elif isinstance(raw_value, list):
+            serialized = raw_value
+        else:
+            serialized = []
+
+        configs = []
+        for item in serialized:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            definition = str(item.get("definition", "")).strip()
+            if not name or not definition:
+                continue
+            try:
+                parsed = parse_c_struct_definition(definition)
+            except ValueError:
+                continue
+            configs.append({"name": name, "definition": definition, "parsed": parsed})
+
+        self._configs = configs
+        self._current_config_name = str(settings.value(self.SELECTED_KEY, "", type=str) or "")
+
+    def _save_configs(self):
+        """Persist current config list to settings."""
+        settings = self._get_settings()
+        payload = [
+            {"name": str(config["name"]), "definition": str(config["definition"])}
+            for config in self._configs
+        ]
+        settings.setValue(self.CONFIGS_KEY, json.dumps(payload, ensure_ascii=False))
+        settings.setValue(self.SELECTED_KEY, self._current_config_name)
+
+    def _refresh_config_combo(self, selected_name: str | None = None):
+        """Rebuild the config dropdown contents."""
+        blocked = self._config_combo.blockSignals(True)
+        self._config_combo.clear()
+        self._config_combo.addItem(tr("panel_structure_new_config"), "__new__")
+        self._config_combo.addItem(tr("panel_structure_manage_config"), "__manage__")
+        if self._configs:
+            self._config_combo.insertSeparator(2)
+            for config in self._configs:
+                self._config_combo.addItem(str(config["name"]), str(config["name"]))
+
+        target_name = selected_name
+        if target_name is None:
+            if self._current_config_name:
+                target_name = self._current_config_name
+            elif self._configs:
+                target_name = str(self._configs[0]["name"])
+
+        if target_name:
+            index = self._config_combo.findData(target_name)
+            if index >= 0:
+                self._config_combo.setCurrentIndex(index)
+                self._apply_selected_config(target_name)
+            else:
+                self._config_combo.setCurrentIndex(0)
+                self._apply_selected_config("")
+        else:
+            self._config_combo.setCurrentIndex(0)
+            self._apply_selected_config("")
+
+        self._config_combo.blockSignals(blocked)
+
+    def _find_config(self, name: str) -> dict[str, object] | None:
+        """Return a config record by name."""
+        for config in self._configs:
+            if config["name"] == name:
+                return config
+        return None
+
+    def _apply_selected_config(self, name: str):
+        """Activate a config and refresh the decoded table."""
+        config = self._find_config(name)
+        self._current_config_name = name if config else ""
+        self._current_definition = config["parsed"] if config else None
+        self._save_configs()
+        self._render_table()
+
+    def _on_config_activated(self, index: int):
+        """Handle user selection from the config dropdown."""
+        if index == 0:
+            self._open_new_config_dialog()
+            return
+        if index == 1:
+            self._open_manage_config_dialog()
+            return
+
+        name = self._config_combo.itemData(index)
+        if isinstance(name, str):
+            self._apply_selected_config(name)
+
+    def _open_new_config_dialog(self):
+        """Show the new-config dialog and save on success."""
+        dialog = NewStructureConfigDialog(self)
+        while dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                self.add_config(dialog.config_name(), dialog.definition_text())
+                return
+            except ValueError as exc:
+                QMessageBox.warning(self, tr("panel_structure_new_title"), str(exc))
+
+        self._refresh_config_combo(selected_name=self._current_config_name)
+
+    def _open_manage_config_dialog(self):
+        """Show the manager dialog for existing configs."""
+        dialog = StructureConfigManagerDialog(self, self)
+        dialog.exec()
+        self._refresh_config_combo(selected_name=self._current_config_name)
+
+    def _on_display_mode_changed(self, checked: bool):
+        """Switch between hex and decimal display."""
+        if not checked:
+            return
+        self._display_base = "hex" if self._hex_radio.isChecked() else "decimal"
+        self._render_table()
+
+    def _set_table_item(self, row: int, column: int, text: str):
+        """Create or update a table item."""
+        item = self._table.item(row, column)
+        if item is None:
+            item = QTableWidgetItem()
+            item.setFont(self._value_font)
+            item.setTextAlignment(
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            )
+            self._table.setItem(row, column, item)
+        item.setText(text)
+        item.setToolTip(text)
+
+    def _render_table(self):
+        """Render the active config against the cached current-row bytes."""
+        if self._current_row_data:
+            self._offset_value.setText(f"0x{self._current_row_offset:08X}")
+        else:
+            self._offset_value.setText("0x00000000")
+
+        if self._current_definition is None:
+            self._table.setRowCount(0)
+            return
+
+        rows = decode_c_struct(
+            self._current_definition,
+            self._current_row_data,
+            display_base=self._display_base,
+        )
+        self._table.setRowCount(len(rows))
+        for row, (field, value) in enumerate(rows):
+            self._set_table_item(row, 0, field.display_name)
+            self._set_table_item(row, 1, value)
+            self._table.setRowHeight(row, 24)
+
+    def add_config(self, name: str, definition: str):
+        """Add a new parsing config and make it active."""
+        normalized_name = (name or "").strip()
+        normalized_definition = (definition or "").strip()
+        if not normalized_name:
+            raise ValueError(tr("panel_structure_invalid_name"))
+        if not normalized_definition:
+            raise ValueError(tr("panel_structure_invalid_definition"))
+        if self._find_config(normalized_name) is not None:
+            raise ValueError(tr("panel_structure_duplicate_name"))
 
         try:
-            data = self._data[offset:offset + size]
+            parsed = parse_c_struct_definition(normalized_definition)
+        except ValueError as exc:
+            raise ValueError(tr("panel_structure_parse_error", str(exc))) from exc
 
-            if field_type == "bytes":
-                return " ".join(f"{b:02X}" for b in data)
-            elif field_type == "uint8":
-                return str(data[0])
-            elif field_type == "uint16":
-                return str(int.from_bytes(data, 'little'))
-            elif field_type == "uint32":
-                return str(int.from_bytes(data, 'little'))
-            elif field_type == "int32":
-                val = int.from_bytes(data, 'little', signed=True)
-                return str(val)
-            else:
-                return " ".join(f"{b:02X}" for b in data)
-        except Exception as e:
-            return f"Error: {e}"
+        self._configs.append(
+            {
+                "name": normalized_name,
+                "definition": normalized_definition,
+                "parsed": parsed,
+            }
+        )
+        self._current_config_name = normalized_name
+        self._current_definition = parsed
+        self._save_configs()
+        self._refresh_config_combo(selected_name=normalized_name)
 
-    def _on_auto_detect(self):
-        """Auto-detect file format."""
-        if not self._data:
-            return
+    def update_config(self, old_name: str, new_name: str, definition: str) -> str:
+        """Update an existing config and return its effective name."""
+        config = self._find_config(old_name)
+        if config is None:
+            raise ValueError(f"Unknown config: {old_name}")
 
-        format_name = self._template_manager.detect_format(self._data)
-        if format_name:
-            index = self._template_combo.findText(format_name)
-            if index >= 0:
-                self._template_combo.setCurrentIndex(index)
-        else:
-            # Clear tree if no format detected
-            self._tree.clear()
+        normalized_name = (new_name or "").strip()
+        normalized_definition = (definition or "").strip()
+        if not normalized_name:
+            raise ValueError(tr("panel_structure_invalid_name"))
+        if not normalized_definition:
+            raise ValueError(tr("panel_structure_invalid_definition"))
+        if normalized_name != old_name and self._find_config(normalized_name) is not None:
+            raise ValueError(tr("panel_structure_duplicate_name"))
+
+        try:
+            parsed = parse_c_struct_definition(normalized_definition)
+        except ValueError as exc:
+            raise ValueError(tr("panel_structure_parse_error", str(exc))) from exc
+
+        config["name"] = normalized_name
+        config["definition"] = normalized_definition
+        config["parsed"] = parsed
+
+        if self._current_config_name == old_name:
+            self._current_config_name = normalized_name
+            self._current_definition = parsed
+
+        self._save_configs()
+        self._refresh_config_combo(selected_name=normalized_name)
+        return normalized_name
+
+    def delete_config(self, name: str):
+        """Delete a saved config."""
+        self._configs = [config for config in self._configs if config["name"] != name]
+
+        if self._current_config_name == name:
+            self._current_config_name = str(self._configs[0]["name"]) if self._configs else ""
+            config = self._find_config(self._current_config_name)
+            self._current_definition = config["parsed"] if config else None
+
+        self._save_configs()
+        self._refresh_config_combo(selected_name=self._current_config_name)
+
+    def set_selected_config(self, name: str):
+        """Programmatically select an existing config."""
+        if self._find_config(name) is None:
+            raise ValueError(f"Unknown config: {name}")
+        self._refresh_config_combo(selected_name=name)
+
+    def get_config(self, name: str) -> dict[str, object] | None:
+        """Return a copy-friendly reference to a config."""
+        return self._find_config(name)
+
+    def configs(self) -> list[dict[str, object]]:
+        """Return the current config list."""
+        return list(self._configs)
+
+    def selected_config_name(self) -> str:
+        """Return the current selected config name."""
+        return self._current_config_name
+
+    def update_row_data(self, row_offset: int, data: bytes):
+        """Update the currently displayed row bytes."""
+        self._current_row_offset = max(0, int(row_offset))
+        self._current_row_data = bytes(data or b"")
+        self._render_table()
+
+    def clear_values(self):
+        """Clear the cached row data while preserving the selected config."""
+        self._current_row_offset = 0
+        self._current_row_data = b""
+        self._render_table()

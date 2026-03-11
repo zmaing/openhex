@@ -345,7 +345,7 @@ class FileHandle(QObject):
         """Write to large file using copy-on-write."""
         if not self._temp_file:
             # Create temp file
-            self._temp_file = tempfile.mktemp(suffix='.hexforge')
+            self._temp_file = tempfile.mktemp(suffix='.openhex')
             try:
                 with open(self._file_path, 'rb') as src:
                     with open(self._temp_file, 'wb') as dst:

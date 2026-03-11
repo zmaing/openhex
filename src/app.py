@@ -1,5 +1,5 @@
 """
-HexForge Application
+openhex Application
 
 QApplication singleton management and global application state.
 """
@@ -7,22 +7,25 @@ QApplication singleton management and global application state.
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QSettings, QCoreApplication
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
+from pathlib import Path
 
 import os
 import sys
+import PyQt6
 
 from .utils.logger import logger
 from .utils.i18n import set_language
 
 
-class HexForgeApp(QApplication):
-    """HexForge Application singleton."""
+class OpenHexApp(QApplication):
+    """openhex Application singleton."""
 
     _instance = None
 
     def __init__(self, argv):
+        self._configure_qt_plugin_path()
         super().__init__(argv)
-        HexForgeApp._instance = self
+        OpenHexApp._instance = self
         self._init_application()
 
     @classmethod
@@ -35,10 +38,10 @@ class HexForgeApp(QApplication):
     def _init_application(self):
         """Initialize application settings and appearance."""
         # Application metadata
-        self.setApplicationName("HexForge")
+        self.setApplicationName("openhex")
         self.setApplicationVersion("1.0.0")
-        self.setOrganizationName("HexForge")
-        self.setOrganizationDomain("hexforge.io")
+        self.setOrganizationName("openhex")
+        self.setOrganizationDomain("openhex.io")
 
         # High DPI support - check if attribute exists
         if hasattr(Qt.ApplicationAttribute, 'AA_EnableHighDpiScaling'):
@@ -47,7 +50,7 @@ class HexForgeApp(QApplication):
             self.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
 
         # Load settings
-        self._settings = QSettings("HexForge", "HexForge")
+        self._settings = QSettings("openhex", "openhex")
 
         # Load language setting
         self._load_language()
@@ -58,7 +61,16 @@ class HexForgeApp(QApplication):
         # Set application palette
         self._set_default_palette()
 
-        logger.info("HexForge application initialized")
+        logger.info("openhex application initialized")
+
+    def _configure_qt_plugin_path(self):
+        """Prefer the platform plugins bundled with the active PyQt6 install."""
+        if os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH"):
+            return
+
+        plugin_dir = Path(PyQt6.__file__).resolve().parent / "Qt6" / "plugins" / "platforms"
+        if plugin_dir.exists():
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(plugin_dir)
 
     def _set_default_font(self):
         """Set default font for the application."""

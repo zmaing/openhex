@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
   "app": {
-    "name": "HexForge",
-    "organization": "HexForge",
-    "domain": "hexforge.io"
+    "name": "openhex",
+    "organization": "openhex",
+    "domain": "openhex.io"
   },
   "editor": {
     "bytes_per_row": 16,

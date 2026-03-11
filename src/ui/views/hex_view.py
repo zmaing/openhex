@@ -13,7 +13,10 @@ UserRole_HighlightRange = Qt.ItemDataRole.UserRole
 # Custom role for selection highlight range
 UserRole_SelectionRange = Qt.ItemDataRole.UserRole + 1
 
+import bisect
 import math
+
+from ...core.filter_engine import CompiledRowFilter, compile_row_filter
 
 
 class OffsetRulerWidget(QWidget):
@@ -182,12 +185,17 @@ class HexTableModel(QAbstractTableModel):
 
         # Cached values
         self._row_count = 0
+        self._header_row_offsets = []
+        self._filtered_source_rows = None
+        self._source_to_visible_row = {}
 
     def set_data(self, data: bytes):
         """Set data to display."""
         self.beginResetModel()
         self._data = bytearray(data)
         self._file_size = len(data)
+        self._filtered_source_rows = None
+        self._source_to_visible_row = {}
         self._update_row_count()
         self.endResetModel()
 
@@ -217,6 +225,8 @@ class HexTableModel(QAbstractTableModel):
         """
         self.beginResetModel()
         self._arrangement_mode = mode
+        self._filtered_source_rows = None
+        self._source_to_visible_row = {}
 
         if mode == "header_length":
             # In header length mode, the parameter is header length
@@ -237,6 +247,7 @@ class HexTableModel(QAbstractTableModel):
 
     def _update_row_count(self):
         """Update row count based on arrangement mode."""
+        self._header_row_offsets = []
         if self._file_size == 0:
             # Show at least 1 row for empty files (new files) so user can start typing
             self._row_count = 1
@@ -253,6 +264,7 @@ class HexTableModel(QAbstractTableModel):
             max_rows = 100000  # 防止无限循环
             max_data_len = 0
             while offset < self._file_size and count < max_rows:
+                self._header_row_offsets.append(offset)
                 if offset + header_len > self._file_size:
                     break
                 # 读取头部的长度值
@@ -268,13 +280,57 @@ class HexTableModel(QAbstractTableModel):
             self._row_count = count
             self._max_data_bytes_per_row = max_data_len
 
-    def _get_row_bounds(self, row: int) -> tuple[int, int, int, int]:
-        """Return frame/data bounds for a row."""
+    def get_source_row_count(self) -> int:
+        """Return the total unfiltered row count."""
+        return self._row_count
+
+    def get_visible_source_rows(self) -> list[int]:
+        """Return the raw row indices currently exposed by the model."""
+        if self._filtered_source_rows is None:
+            return list(range(self._row_count))
+        return list(self._filtered_source_rows)
+
+    def map_view_row_to_source(self, row: int) -> int:
+        """Map a visible row index to the underlying source row index."""
+        if self._filtered_source_rows is None:
+            return row
+        if 0 <= row < len(self._filtered_source_rows):
+            return self._filtered_source_rows[row]
+        return row
+
+    def map_source_row_to_view(self, row: int) -> int:
+        """Map a source row index to the visible row index, or -1 if filtered out."""
+        if self._filtered_source_rows is None:
+            return row if 0 <= row < self._row_count else -1
+        return self._source_to_visible_row.get(row, -1)
+
+    def set_filtered_source_rows(self, rows: list[int] | None) -> None:
+        """Expose only the provided source rows in the view."""
+        normalized = None
+        if rows is not None:
+            normalized = [row for row in rows if 0 <= row < self._row_count]
+
+        if normalized == self._filtered_source_rows:
+            return
+
+        self.beginResetModel()
+        self._filtered_source_rows = normalized
+        if normalized is None:
+            self._source_to_visible_row = {}
+        else:
+            self._source_to_visible_row = {
+                source_row: visible_row
+                for visible_row, source_row in enumerate(normalized)
+            }
+        self.endResetModel()
+
+    def _get_source_row_bounds(self, row: int) -> tuple[int, int, int, int]:
+        """Return frame/data bounds for a source row."""
         if self._arrangement_mode == "equal_frame":
             row_offset = row * self._bytes_per_row
             row_end_offset = min(row_offset + self._bytes_per_row, self._file_size)
         else:
-            row_offset = self._get_row_offset(row)
+            row_offset = self._get_source_row_offset(row)
             if row_offset >= self._file_size:
                 return row_offset, self._file_size, self._file_size, self._file_size
 
@@ -290,6 +346,10 @@ class HexTableModel(QAbstractTableModel):
         data_row_offset = row_offset + self._header_length if self._arrangement_mode == "header_length" else row_offset
         return row_offset, row_end_offset, data_row_offset, row_end_offset
 
+    def _get_row_bounds(self, row: int) -> tuple[int, int, int, int]:
+        """Return frame/data bounds for a row."""
+        return self._get_source_row_bounds(self.map_view_row_to_source(row))
+
     def _get_visible_data_bounds(self, row_offset: int, row_end_offset: int) -> tuple[int, int, int, int]:
         """Return full and visible data bounds for a row."""
         data_start = row_offset + self._header_length
@@ -298,10 +358,16 @@ class HexTableModel(QAbstractTableModel):
         window_end = min(data_end, window_start + self._visible_byte_count)
         return data_start, data_end, window_start, window_end
 
-    def _get_row_offset(self, row: int) -> int:
-        """Get the file offset for a specific row in header length mode."""
+    def _get_source_row_offset(self, row: int) -> int:
+        """Get the file offset for a specific source row in header length mode."""
         if row < 0:
             return 0
+
+        if self._arrangement_mode == "equal_frame":
+            return row * self._bytes_per_row
+
+        if row < len(self._header_row_offsets):
+            return self._header_row_offsets[row]
 
         offset = 0
         header_len = self._header_length
@@ -319,6 +385,17 @@ class HexTableModel(QAbstractTableModel):
             offset += header_len + data_len
 
         return offset
+
+    def _get_row_offset(self, row: int) -> int:
+        """Get the file offset for a visible row."""
+        return self._get_source_row_offset(self.map_view_row_to_source(row))
+
+    def get_source_row_data(self, row: int):
+        """Return a lightweight view of the data payload for a source row."""
+        _row_start, _row_end, data_start, data_end = self._get_source_row_bounds(row)
+        if data_end <= data_start:
+            return memoryview(self._data)[0:0]
+        return memoryview(self._data)[data_start:data_end]
 
     def _parse_header_data_length(self, header_bytes: bytes, available_data: int) -> int:
         """Parse a header length, preferring the byte order that fits the remaining file."""
@@ -365,8 +442,9 @@ class HexTableModel(QAbstractTableModel):
 
         self._horizontal_byte_offset = start
         self._visible_byte_count = count
-        if self._row_count > 0:
-            self.dataChanged.emit(self.index(0, 0), self.index(self._row_count - 1, 1))
+        visible_rows = self.rowCount()
+        if visible_rows > 0:
+            self.dataChanged.emit(self.index(0, 0), self.index(visible_rows - 1, 1))
 
     def get_horizontal_byte_offset(self) -> int:
         """Return the current shared horizontal byte offset."""
@@ -388,6 +466,8 @@ class HexTableModel(QAbstractTableModel):
 
     def rowCount(self, parent=QModelIndex()):
         """Return number of rows."""
+        if self._filtered_source_rows is not None:
+            return len(self._filtered_source_rows)
         return self._row_count
 
     def columnCount(self, parent=QModelIndex()):
@@ -546,13 +626,17 @@ class HexTableModel(QAbstractTableModel):
         # Convert SearchResult objects to (offset, length) tuples
         self._search_results = [(r.offset, r.length) for r in results] if results else []
         self._current_result_index = current_index
-        self.dataChanged.emit(self.index(0, 0), self.index(self._row_count - 1, 1))
+        visible_rows = self.rowCount()
+        if visible_rows > 0:
+            self.dataChanged.emit(self.index(0, 0), self.index(visible_rows - 1, 1))
 
     def clear_search_results(self):
         """Clear search highlights."""
         self._search_results = []
         self._current_result_index = -1
-        self.dataChanged.emit(self.index(0, 0), self.index(self._row_count - 1, 1))
+        visible_rows = self.rowCount()
+        if visible_rows > 0:
+            self.dataChanged.emit(self.index(0, 0), self.index(visible_rows - 1, 1))
 
     def set_selection_ranges(self, ranges: list):
         """Set selection ranges for highlighting.
@@ -561,74 +645,24 @@ class HexTableModel(QAbstractTableModel):
             ranges: List of (start_offset, end_offset) tuples
         """
         self._selection_ranges = ranges
-        
-        # Update both old and new areas to avoid ghost highlights
-        old_ranges = getattr(self, '_selection_ranges', [])
-        if old_ranges and ranges:
-            bytes_per_row = self._bytes_per_row if self._bytes_per_row > 0 else 1
-            old_min = min(r[0] for r in old_ranges)
-            old_max = max(r[1] for r in old_ranges)
-            new_min = min(r[0] for r in ranges)
-            new_max = max(r[1] for r in ranges)
-            
-            min_offset = min(old_min, new_min)
-            max_offset = max(old_max, new_max)
-            
-            start_row = min_offset // bytes_per_row
-            end_row = max_offset // bytes_per_row
-            
-            top = self.index(max(0, start_row - 2), 0)
-            bottom = self.index(min(self._row_count - 1, end_row + 2), 1)
-            self.dataChanged.emit(top, bottom)
-        elif ranges:
-            self.dataChanged.emit(self.index(0, 0), self.index(self._row_count - 1, 1))
-        elif old_ranges:
-            # Clear old selection
-            bytes_per_row = self._bytes_per_row if self._bytes_per_row > 0 else 1
-            old_min = min(r[0] for r in old_ranges)
-            old_max = max(r[1] for r in old_ranges)
-            start_row = old_min // bytes_per_row
-            end_row = old_max // bytes_per_row
-            top = self.index(max(0, start_row - 2), 0)
-            bottom = self.index(min(self._row_count - 1, end_row + 2), 1)
-            self.dataChanged.emit(top, bottom)
+
+        visible_rows = self.rowCount()
+        if visible_rows > 0:
+            self.dataChanged.emit(self.index(0, 0), self.index(visible_rows - 1, 1))
 
     def set_selection(self, start: int, end: int):
         """Set single selection for highlighting (backward compatible)."""
-        old_ranges = self._selection_ranges
         self._selection_ranges = [(start, end)]
-        
-        # Update both old and new areas
-        if old_ranges:
-            bytes_per_row = self._bytes_per_row if self._bytes_per_row > 0 else 1
-            old_min = min(r[0] for r in old_ranges)
-            old_max = max(r[1] for r in old_ranges)
-            min_offset = min(old_min, start)
-            max_offset = max(old_max, end)
-            
-            start_row = min_offset // bytes_per_row
-            end_row = max_offset // bytes_per_row
-            
-            top = self.index(max(0, start_row - 2), 0)
-            bottom = self.index(min(self._row_count - 1, end_row + 2), 1)
-            self.dataChanged.emit(top, bottom)
-        else:
-            self.dataChanged.emit(self.index(0, 0), self.index(self._row_count - 1, 1))
+        visible_rows = self.rowCount()
+        if visible_rows > 0:
+            self.dataChanged.emit(self.index(0, 0), self.index(visible_rows - 1, 1))
 
     def clear_selection_highlight(self):
         """Clear selection highlight."""
-        old_ranges = self._selection_ranges
         self._selection_ranges = []
-        
-        if old_ranges:
-            bytes_per_row = self._bytes_per_row if self._bytes_per_row > 0 else 1
-            old_min = min(r[0] for r in old_ranges)
-            old_max = max(r[1] for r in old_ranges)
-            start_row = old_min // bytes_per_row
-            end_row = old_max // bytes_per_row
-            top = self.index(max(0, start_row - 2), 0)
-            bottom = self.index(min(self._row_count - 1, end_row + 2), 1)
-            self.dataChanged.emit(top, bottom)
+        visible_rows = self.rowCount()
+        if visible_rows > 0:
+            self.dataChanged.emit(self.index(0, 0), self.index(visible_rows - 1, 1))
 
     def _get_hex_row(self, row_offset: int, row_end_offset: int = None) -> str:
         """Get hex string for row."""
@@ -938,29 +972,11 @@ class HexViewDelegate(QAbstractItemDelegate):
             if model is None:
                 return
 
-            bytes_per_row = getattr(model, '_bytes_per_row', 16)
-            if bytes_per_row <= 0:
-                bytes_per_row = 16
-
-            header_length = getattr(model, '_header_length', 0)
-            arrangement_mode = getattr(model, '_arrangement_mode', 'equal_frame')
             file_size = getattr(model, '_file_size', 0)
             row = index.row()
 
             # Calculate byte range for this row
-            if arrangement_mode == "header_length":
-                row_offset = model._get_row_offset(row)
-                data_start = row_offset + header_length
-                if row_offset < file_size:
-                    data_len = model._get_header_data_length(row_offset)
-                    if data_len == 0:
-                        data_len = 1
-                    data_end = data_start + data_len
-                else:
-                    return
-            else:
-                data_start = row * bytes_per_row
-                data_end = min(data_start + bytes_per_row, file_size)
+            _row_start, _row_end, data_start, data_end = model._get_row_bounds(row)
 
             # Check if cursor is in this row
             cursor_byte = self._cursor_byte_offset
@@ -1054,29 +1070,11 @@ class HexViewDelegate(QAbstractItemDelegate):
                 return
 
             # Get row parameters
-            bytes_per_row = getattr(model, '_bytes_per_row', 16)
-            if bytes_per_row <= 0:
-                bytes_per_row = 16
-
-            header_length = getattr(model, '_header_length', 0)
-            arrangement_mode = getattr(model, '_arrangement_mode', 'equal_frame')
             file_size = getattr(model, '_file_size', 0)
             row = index.row()
 
             # Calculate byte range for this row
-            if arrangement_mode == "header_length":
-                row_offset = model._get_row_offset(row)
-                data_start = row_offset + header_length
-                if row_offset < file_size:
-                    data_len = model._get_header_data_length(row_offset)
-                    if data_len == 0:
-                        data_len = 1
-                    data_end = data_start + data_len
-                else:
-                    return
-            else:
-                data_start = row * bytes_per_row
-                data_end = min(data_start + bytes_per_row, file_size)
+            _row_start, _row_end, data_start, data_end = model._get_row_bounds(row)
 
             # Calculate how many bytes are in this row
             row_byte_count = data_end - data_start
@@ -1234,6 +1232,10 @@ class HexView(QTableView):
         self._column_end_byte_pos = -1    # Track end for column range selection
         self._block_start_byte_pos = -1  # Store start byte position for block/continuous selection  # Byte position for column selection
 
+        # Row filtering state
+        self._row_filters: list[str] = []
+        self._compiled_row_filters: list[CompiledRowFilter] = []
+
         # Setup model and delegate
         self._model = HexTableModel(self)
         self.setModel(self._model)
@@ -1310,6 +1312,132 @@ class HexView(QTableView):
         visible_count = self._model.get_visible_byte_count()
         max_offset = self._model.get_max_horizontal_byte_offset()
         return max_offset, visible_count, max_offset > 0
+
+    def set_row_filters(self, filters: list[str]) -> None:
+        """Compile and apply row filters to the current view."""
+        clean_filters = [str(value).strip() for value in filters if str(value).strip()]
+        self._row_filters = clean_filters
+        self._compiled_row_filters = [compile_row_filter(expression) for expression in clean_filters]
+        self._apply_row_filters()
+
+    def clear_row_filters(self) -> None:
+        """Clear all active row filters."""
+        self._row_filters = []
+        self._compiled_row_filters = []
+        self._apply_row_filters()
+
+    def get_row_filters(self) -> list[str]:
+        """Return active row filters."""
+        return list(self._row_filters)
+
+    def get_visible_row_count(self) -> int:
+        """Return how many rows are currently visible after filtering."""
+        return self._model.rowCount()
+
+    def get_total_row_count(self) -> int:
+        """Return the total unfiltered row count."""
+        return self._model.get_source_row_count()
+
+    def _row_data_for_filter(self, source_row: int):
+        """Return the data payload for a source row, excluding any header bytes."""
+        return self._model.get_source_row_data(source_row)
+
+    def _row_matches_filters(self, source_row: int) -> bool:
+        """Return whether a source row matches all active filters."""
+        if self._model._file_size == 0:
+            return True
+        row_data = self._row_data_for_filter(source_row)
+        if not row_data:
+            return False
+        return all(compiled.matches(row_data) for compiled in self._compiled_row_filters)
+
+    def _nearest_visible_row(self, source_row: int) -> int | None:
+        """Return the nearest visible row to the given source row index."""
+        visible_source_rows = self._model.get_visible_source_rows()
+        if not visible_source_rows:
+            return None
+
+        index = bisect.bisect_left(visible_source_rows, source_row)
+        candidates = []
+        if index < len(visible_source_rows):
+            candidates.append(visible_source_rows[index])
+        if index > 0:
+            candidates.append(visible_source_rows[index - 1])
+        if not candidates:
+            return None
+        nearest_source_row = min(candidates, key=lambda candidate: abs(candidate - source_row))
+        return self._model.map_source_row_to_view(nearest_source_row)
+
+    def _find_source_row_for_offset(self, offset: int) -> int | None:
+        """Map a file offset to its source row index."""
+        row_count = self._model.get_source_row_count()
+        if row_count <= 0:
+            return None
+
+        offset = max(0, int(offset))
+        if self._model._arrangement_mode == "equal_frame":
+            bytes_per_row = max(1, self._model._bytes_per_row)
+            return min(row_count - 1, offset // bytes_per_row)
+
+        for row in range(row_count):
+            _row_start, _row_end, data_start, data_end = self._model._get_source_row_bounds(row)
+            if data_start <= offset < data_end:
+                return row
+            if offset < data_start:
+                return row
+        return row_count - 1
+
+    def _ensure_current_row_visible(self) -> None:
+        """Keep the current cursor and selection on a visible row after filtering."""
+        if self._model.rowCount() == 0:
+            self.selectionModel().blockSignals(True)
+            self.selectionModel().clearSelection()
+            self.selectionModel().blockSignals(False)
+            self.clearSelection()
+            self.viewport().update()
+            return
+
+        current_index = self.currentIndex()
+        if current_index.isValid() and 0 <= current_index.row() < self._model.rowCount():
+            return
+
+        source_row = self._find_source_row_for_offset(self._cursor_byte_offset)
+        target_row = self._model.map_source_row_to_view(source_row) if source_row is not None else -1
+        if target_row < 0:
+            target_row = self._nearest_visible_row(source_row if source_row is not None else 0)
+        if target_row is None or target_row < 0:
+            target_row = 0
+            _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(target_row)
+            self._cursor_byte_offset = data_start
+            self._nibble_pos = 0
+
+        self.selectionModel().blockSignals(True)
+        self.selectionModel().clearSelection()
+        self.setCurrentIndex(self._model.index(target_row, min(self._cursor_column, 1)))
+        self.scrollTo(self._model.index(target_row, 0))
+        self.selectionModel().blockSignals(False)
+        self._update_delegate_cursor()
+        self.cursor_moved.emit(self._cursor_byte_offset)
+
+    def _apply_row_filters(self) -> None:
+        """Rebuild the visible row map based on the active filter set."""
+        if not self._compiled_row_filters:
+            self._model.set_filtered_source_rows(None)
+            self._ensure_current_row_visible()
+            self._resize_columns()
+            self.viewport().update()
+            return
+
+        row_count = self._model.get_source_row_count()
+        visible_source_rows = [
+            row
+            for row in range(row_count)
+            if self._row_matches_filters(row)
+        ]
+        self._model.set_filtered_source_rows(visible_source_rows)
+        self._ensure_current_row_visible()
+        self._resize_columns()
+        self.viewport().update()
 
     def _ensure_cursor_visible(self):
         """Shift the shared horizontal window so the active byte stays visible."""
@@ -1486,8 +1614,19 @@ class HexView(QTableView):
 
     def _move_cursor_to_byte(self, byte_offset: int):
         """Move cursor to specified byte offset."""
-        bytes_per_row = self._model._bytes_per_row
-        row = byte_offset // bytes_per_row
+        source_row = self._find_source_row_for_offset(byte_offset)
+        if source_row is None:
+            return
+
+        row = self._model.map_source_row_to_view(source_row)
+        if row < 0:
+            row = self._nearest_visible_row(source_row)
+            if row is None or row < 0:
+                return
+            _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(row)
+            byte_offset = data_start
+
+        self._cursor_byte_offset = max(0, byte_offset)
         self._ensure_cursor_visible()
         
         # Block signals to prevent selection changes
@@ -1618,19 +1757,8 @@ class HexView(QTableView):
         Returns:
             Byte offset in file
         """
-        bytes_per_row = self._model._bytes_per_row
-        header_length = self._model._header_length
-        
-        if self._model._arrangement_mode == "header_length":
-            # For header length mode, calculate offset using model
-            row_offset = self._model._get_row_offset(row)
-        else:
-            row_offset = row * bytes_per_row
-            
-        # Add header length if present
-        row_offset += header_length
-        
-        return row_offset
+        _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(row)
+        return data_start
 
     def _calculate_column_byte_pos(self, index: QModelIndex, x_pos: int) -> int:
         """Calculate byte position within a row from x position."""
@@ -1719,8 +1847,9 @@ class HexView(QTableView):
                     else:
                         continue
                 else:
-                    start = row * bytes_per_row
-                    end = min(start + bytes_per_row - 1, file_size - 1)
+                    _row_start, _row_end, data_start, data_end = self._model._get_row_bounds(row)
+                    start = data_start
+                    end = min(data_end - 1, file_size - 1)
                 
                 if end >= start:
                     ranges.append((start, end))
@@ -1770,10 +1899,10 @@ class HexView(QTableView):
                                 ranges.append((start, start))
             else:
                 # Equal frame mode
-                total_rows = (file_size + bytes_per_row - 1) // bytes_per_row
-                for r in range(total_rows):
-                    start = r * bytes_per_row + byte_pos
-                    if start < file_size:
+                for row in range(self._model.rowCount()):
+                    _row_start, _row_end, data_start, data_end = self._model._get_row_bounds(row)
+                    start = data_start + byte_pos
+                    if start < min(data_end, file_size):
                         ranges.append((start, start))
 
             self._model.set_selection_ranges(ranges)
@@ -1859,10 +1988,11 @@ class HexView(QTableView):
                             if end >= start:
                                 ranges.append((start, end))
                 else:
-                    start = row * bytes_per_row + start_byte_pos
-                    end = row * bytes_per_row + end_byte_pos
-                    if start < file_size:
-                        ranges.append((start, min(end, file_size - 1)))
+                    _row_start, _row_end, data_start, data_end = self._model._get_row_bounds(row)
+                    start = data_start + start_byte_pos
+                    end = data_start + end_byte_pos
+                    if start < min(data_end, file_size):
+                        ranges.append((start, min(end, data_end - 1, file_size - 1)))
 
             self._model.set_selection_ranges(ranges)
 
@@ -1925,8 +2055,9 @@ class HexView(QTableView):
                 # Determine byte range within rows
                 if 0 in cols and 1 in cols:
                     # Both columns selected - select full rows
-                    start_offset = min_row * bytes_per_row
-                    end_offset = min((max_row + 1) * bytes_per_row - 1, file_size - 1)
+                    _row_start, _row_end, start_offset, _data_end = self._model._get_row_bounds(min_row)
+                    _row_start, _row_end, end_data_start, end_data_end = self._model._get_row_bounds(max_row)
+                    end_offset = min(end_data_end - 1, file_size - 1)
                 elif 0 in cols:
                     # Only hex column - calculate precise range
                     # Use block start info if available for more precision
@@ -1934,14 +2065,17 @@ class HexView(QTableView):
                         start_byte = self._block_start_byte_pos
                     else:
                         start_byte = 0
-                    start_offset = min_row * bytes_per_row + start_byte
+                    _row_start, _row_end, start_data_start, start_data_end = self._model._get_row_bounds(min_row)
+                    _row_start, _row_end, end_data_start, end_data_end = self._model._get_row_bounds(max_row)
+                    start_offset = start_data_start + start_byte
                     
                     # For now, select to end of row
-                    end_offset = (max_row + 1) * bytes_per_row - 1
+                    end_offset = end_data_end - 1
                 else:
                     # Only ascii column
-                    start_offset = min_row * bytes_per_row
-                    end_offset = (max_row + 1) * bytes_per_row - 1
+                    _row_start, _row_end, start_offset, _data_end = self._model._get_row_bounds(min_row)
+                    _row_start, _row_end, end_data_start, end_data_end = self._model._get_row_bounds(max_row)
+                    end_offset = end_data_end - 1
                 
                 end_offset = min(end_offset, file_size - 1)
 
@@ -1975,7 +2109,8 @@ class HexView(QTableView):
                     row_offset = self._model._get_row_offset(index.row())
                     self._cursor_byte_offset = row_offset + header_length + byte_pos
                 else:
-                    self._cursor_byte_offset = index.row() * bytes_per_row + byte_pos
+                    _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(index.row())
+                    self._cursor_byte_offset = data_start + byte_pos
 
                 if self._selection_mode == self.SELECTION_BLOCK:
                     # Start block selection - store start position with byte offset
@@ -2099,8 +2234,10 @@ class HexView(QTableView):
             end_offset = end_row_offset + header_length + end_byte
         else:
             # Equal frame mode - simple calculation
-            start_offset = start_row * bytes_per_row + start_byte
-            end_offset = end_row * bytes_per_row + end_byte
+            _row_start, _row_end, start_data_start, start_data_end = self._model._get_row_bounds(start_row)
+            _row_start, _row_end, end_data_start, end_data_end = self._model._get_row_bounds(end_row)
+            start_offset = start_data_start + start_byte
+            end_offset = end_data_start + end_byte
         
         # Ensure start <= end
         if end_offset < start_offset:
@@ -2204,10 +2341,11 @@ class HexView(QTableView):
         else:
             # Equal frame mode - use row count directly
             for r in range(row_count):
-                row_start = r * bytes_per_row + start_byte
-                row_end = r * bytes_per_row + end_byte
-                if row_start < file_size:
-                    ranges.append((row_start, min(row_end, file_size - 1)))
+                _row_start, _row_end, data_start, data_end = self._model._get_row_bounds(r)
+                row_start = data_start + start_byte
+                row_end = data_start + end_byte
+                if row_start < min(data_end, file_size):
+                    ranges.append((row_start, min(row_end, data_end - 1, file_size - 1)))
 
         # Directly set selection ranges in model (don't use Qt selection)
         self._model.set_selection_ranges(ranges)
@@ -2223,9 +2361,8 @@ class HexView(QTableView):
         if not index.isValid():
             return 0
 
-        row = index.row()
-        total_per_row = self._model._bytes_per_row + self._model._header_length
-        return row * total_per_row
+        row_start, _row_end, _data_start, _data_end = self._model._get_row_bounds(index.row())
+        return row_start
 
     def set_file_handle(self, file_handle):
         """Set file handle to display."""
@@ -2241,9 +2378,6 @@ class HexView(QTableView):
 
         # Load data
         self._reload_data()
-
-        # Resize columns based on bytes_per_row
-        self._resize_columns()
 
         # Auto-select first cell and set focus
         try:
@@ -2275,6 +2409,7 @@ class HexView(QTableView):
             data = self._file_handle.read(0, self._file_handle.file_size)
             self._model.set_data(data)
             self._resize_columns()
+            self._apply_row_filters()
 
     def _on_data_changed(self, start, end):
         """Handle data change."""
@@ -2291,6 +2426,7 @@ class HexView(QTableView):
         """Set bytes per row for equal frame mode."""
         self._model.set_arrangement_mode("equal_frame", value)
         self._resize_columns()
+        self._apply_row_filters()
 
     def set_arrangement_mode(self, mode: str, param: int = 32):
         """Set arrangement mode.
@@ -2302,6 +2438,7 @@ class HexView(QTableView):
         """
         self._model.set_arrangement_mode(mode, param)
         self._resize_columns()
+        self._apply_row_filters()
 
     def set_display_mode(self, mode: str):
         """Set the display mode and refresh layout."""
@@ -2408,11 +2545,49 @@ class HexView(QTableView):
         """Get file offset at current cursor position."""
         return max(0, getattr(self, "_cursor_byte_offset", 0))
 
+    def get_data_bounds_for_offset(self, offset: int | None = None) -> tuple[int, int]:
+        """Return the data-byte bounds for the row containing the given offset."""
+        model = getattr(self, "_model", None)
+        if model is None or getattr(model, "_file_size", 0) <= 0:
+            return (0, 0)
+
+        target_offset = self.get_offset_at_cursor() if offset is None else max(0, int(offset))
+        row_count = model.rowCount()
+        if row_count <= 0:
+            return (0, 0)
+
+        candidate_rows = []
+        current_index = self.currentIndex()
+        if current_index.isValid():
+            candidate_rows.append(current_index.row())
+
+        if getattr(model, "_arrangement_mode", "equal_frame") == "equal_frame":
+            bytes_per_row = max(1, getattr(model, "_bytes_per_row", 1))
+            source_row = min(model.get_source_row_count() - 1, target_offset // bytes_per_row)
+            visible_row = model.map_source_row_to_view(source_row)
+            if visible_row >= 0:
+                candidate_rows.append(visible_row)
+
+        for row in candidate_rows:
+            if row < 0 or row >= row_count:
+                continue
+            _row_start, _row_end, data_start, data_end = model._get_row_bounds(row)
+            if data_start <= target_offset < data_end:
+                return (data_start, data_end)
+
+        if getattr(model, "_arrangement_mode", "equal_frame") == "header_length":
+            for row in range(row_count):
+                _row_start, _row_end, data_start, data_end = model._get_row_bounds(row)
+                if data_start <= target_offset < data_end:
+                    return (data_start, data_end)
+
+        last_row = max(0, min(row_count - 1, candidate_rows[-1] if candidate_rows else 0))
+        _row_start, _row_end, data_start, data_end = model._get_row_bounds(last_row)
+        return (data_start, data_end)
+
     def scrollToOffset(self, offset: int):
         """Scroll to specific offset."""
-        total_per_row = self._model._bytes_per_row + self._model._header_length
-        row = offset // total_per_row
-        self.scrollTo(self._model.index(row, 0))
+        self._move_cursor_to_byte(offset)
 
     def set_search_results(self, results, current_index=-1):
         """Set search results for highlighting."""
@@ -2502,7 +2677,8 @@ class HexView(QTableView):
         else:
             # For equal frame mode, calculate from row and preserve byte-in-row position
             byte_in_row = self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset > 0 else 0
-            self._cursor_byte_offset = row * bytes_per_row + byte_in_row
+            _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(row)
+            self._cursor_byte_offset = data_start + byte_in_row
 
         # Update delegate cursor and refresh
         self._update_delegate_cursor()
@@ -2587,18 +2763,8 @@ class HexView(QTableView):
         if not index.isValid():
             return False
 
-        # Calculate byte offset from cursor position
-        row = index.row()
-        col = index.column()
-        bytes_per_row = self._model._bytes_per_row
-        header_length = self._model._header_length
-        arrangement_mode = self._model._arrangement_mode
-
-        if arrangement_mode == "header_length":
-            row_offset = self._model._get_row_offset(row)
-            cursor_offset = row_offset + header_length + self._cursor_byte_offset
-        else:
-            cursor_offset = row * bytes_per_row + self._cursor_byte_offset
+        # Cursor state already stores the absolute byte offset.
+        cursor_offset = self._cursor_byte_offset
 
         # Check if we have a file handle for writing
         if not self._file_handle:

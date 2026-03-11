@@ -4,30 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-HexForge is an **AI-Enhanced Binary Editor** (hex editor) for macOS, built with PyQt6. It features AI-powered analysis, pattern detection, code generation, and efficient handling of large files via memory-mapped files.
+openhex is an **AI-Enhanced Binary Editor** (hex editor) for macOS, built with PyQt6. It features AI-powered analysis, pattern detection, code generation, and efficient handling of large files via memory-mapped files.
 
 ## Commands
 
 ### Running the Application
 
 ```bash
-cd /Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge
+cd /Users/zhanghaoli/Documents/git/openhex
 pip install -r requirements.txt
-python3 hex_forge.py
+python3 openhex.py
 ```
 
 ### Building macOS App
 
 ```bash
-cd /Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge
-bash build_app.sh                  # Builds to dist/HexForge.app
+cd /Users/zhanghaoli/Documents/git/openhex
+bash build_app.sh                  # Builds to dist/openhex.app
 bash build_app.sh --dmg            # Builds DMG installer
 ```
 
 ### Running Tests
 
 ```bash
-cd /Users/zhanghaoli/Documents/WorkFile/Code/myhxd/hex_forge
+cd /Users/zhanghaoli/Documents/git/openhex
 python3 tests/test_quick.py        # Quick test (requires display or offscreen mode)
 python3 tests/test_search_engine.py
 python3 tests/test_undo_stack.py
@@ -38,11 +38,11 @@ Set `QT_QPA_PLATFORM=offscreen` for headless testing.
 ## Architecture
 
 ```
-hex_forge/
-├── hex_forge.py          # Entry point (wrapper)
+openhex/
+├── openhex.py          # Entry point (wrapper)
 ├── src/
-│   ├── app.py           # HexForgeApp class
-│   ├── main.py          # HexForgeMainWindow (main UI)
+│   ├── app.py           # OpenHexApp class
+│   ├── main.py          # OpenHexMainWindow (main UI)
 │   ├── core/           # Data handling layer
 │   │   ├── data_model.py      # Display modes (HEX, BINARY, ASCII, OCTAL)
 │   │   ├── search_engine.py   # Hex/text search

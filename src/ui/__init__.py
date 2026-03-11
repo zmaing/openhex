@@ -1,7 +1,7 @@
 """
 UI Package
 
-User interface components for HexForge.
+User interface components for openhex.
 """
 
 from .main_window import HexEditorMainWindow
