@@ -55,16 +55,16 @@ def test_hex_view_row_filters_hide_rows_and_reapply_after_edit():
 
         assert hex_view.get_total_row_count() == 3
         assert hex_view.get_visible_row_count() == 2
-        assert hex_view.isRowHidden(0)
-        assert not hex_view.isRowHidden(1)
-        assert not hex_view.isRowHidden(2)
+        assert hex_view._model.rowCount() == 2
+        assert hex_view._model.map_view_row_to_source(0) == 1
+        assert hex_view._model.map_view_row_to_source(1) == 2
 
         doc = editor._document_model.current_document
         doc.write(0, bytes([0x03]))
         QTest.qWait(10)
 
         assert hex_view.get_visible_row_count() == 3
-        assert not hex_view.isRowHidden(0)
+        assert hex_view._model.map_view_row_to_source(0) == 0
     finally:
         if window._hex_editor._document_model.current_document is not None:
             window._hex_editor._document_model.current_document.file_state = FileState.UNCHANGED
