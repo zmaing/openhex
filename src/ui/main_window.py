@@ -819,6 +819,17 @@ class HexEditorMainWindow(QWidget):
             280,
         )
 
+    def is_right_panel_visible(self) -> bool:
+        """Return whether the right-side splitter panel is currently visible."""
+        if self._splitter is None:
+            return not self._right_panel.isHidden()
+
+        sizes = self._splitter.sizes()
+        if len(sizes) <= 2:
+            return not self._right_panel.isHidden()
+
+        return not self._right_panel.isHidden() and sizes[2] > 0
+
     def _emit_side_panel_state_changed(self):
         """Notify outer UI that side panel state changed."""
         self.side_panel_state_changed.emit(
@@ -1787,8 +1798,18 @@ class HexEditorMainWindow(QWidget):
         )
 
     def toggle_ai_panel(self):
-        """Toggle AI panel visibility inside the side panel container."""
-        self.set_ai_panel_visible(not self.is_ai_panel_visible())
+        """Toggle the right-side panel container from the View menu."""
+        visible = not self.is_right_panel_visible()
+        self._set_side_panel_visibility(
+            self._right_panel,
+            2,
+            visible,
+            "_right_panel_width",
+            280,
+        )
+        if visible:
+            self._apply_right_panel_width_for_layout()
+            self._schedule_right_panel_width_restore()
 
     def toggle_value_panel(self):
         """Toggle Value panel visibility inside the side panel container."""

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import os
 import sys
+import tempfile
 import PyQt6
 
 from .utils.logger import logger
@@ -50,7 +51,7 @@ class OpenHexApp(QApplication):
             self.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
 
         # Load settings
-        self._settings = QSettings("openhex", "openhex")
+        self._settings = self._create_settings()
 
         # Load language setting
         self._load_language()
@@ -62,6 +63,14 @@ class OpenHexApp(QApplication):
         self._set_default_palette()
 
         logger.info("openhex application initialized")
+
+    def _create_settings(self) -> QSettings:
+        """Create application settings storage."""
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            settings_dir = Path(tempfile.gettempdir()) / "openhex-pytest"
+            settings_dir.mkdir(parents=True, exist_ok=True)
+            return QSettings(str(settings_dir / "settings.ini"), QSettings.Format.IniFormat)
+        return QSettings("openhex", "openhex")
 
     def _configure_qt_plugin_path(self):
         """Prefer the platform plugins bundled with the active PyQt6 install."""

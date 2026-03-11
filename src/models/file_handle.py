@@ -216,6 +216,46 @@ class FileHandle(QObject):
             logger.error(f"Failed to load file: {e}")
             return False
 
+    def load_from_content(
+        self,
+        content: bytes | bytearray,
+        *,
+        file_name: str = "Untitled",
+        file_path: Optional[str] = None,
+    ) -> bool:
+        """
+        Load document data directly from bytes.
+
+        This is primarily used by tests and in-memory workflows where the
+        caller already has the file content and does not want to round-trip
+        through disk first.
+        """
+        try:
+            self.close()
+
+            self._file_path = file_path
+            self._file_name = os.path.basename(file_path) if file_path else file_name
+            self._data = bytearray(content)
+            self._file_size = len(self._data)
+            self._is_mapped = False
+            self._file = None
+            self._mmap = None
+            self._temp_file = None
+            self._original_data = bytearray(self._data)
+            self._modified_offsets.clear()
+            self.file_state = FileState.UNCHANGED
+
+            if file_path:
+                self.detect_file_type()
+            else:
+                self._file_type = FileType.BINARY
+
+            logger.info(f"Loaded in-memory content: {self._file_name} ({self._file_size} bytes)")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load in-memory content: {e}")
+            return False
+
     def _load_small_file(self) -> bool:
         """Load small file into memory."""
         try:
@@ -717,6 +757,10 @@ class FileHandle(QObject):
             self._temp_file = None
 
         self._data.clear()
+        self._file_size = 0
+        self._is_mapped = False
+        self._modified_offsets.clear()
+        self._original_data = None
 
     def __del__(self):
         """Destructor."""

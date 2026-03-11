@@ -21,7 +21,6 @@ os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtWidgets import QApplication
 from PyQt6.QtTest import QTest
 from PyQt6.QtGui import QColor
 
@@ -36,6 +35,15 @@ def log(status, message):
     symbol = "PASS" if status else "FAIL"
     print(f"[{symbol}] {message}")
     return status
+
+
+def _close_window(window):
+    """Close a test window without triggering save prompts."""
+    document_model = getattr(window._hex_editor, "_document_model", None)
+    if document_model is not None:
+        for document in document_model.documents:
+            document.file_state = FileState.UNCHANGED
+    window.close()
 
 
 def test_modified_bytes_tracking():
@@ -77,10 +85,8 @@ def test_hex_view_red_color():
     print("Test 2: Hex View Red Color for Modified Bytes")
     print("=" * 60)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(100)
 
     # Open a test file
     with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.bin') as f:
@@ -89,7 +95,7 @@ def test_hex_view_red_color():
 
     try:
         window._hex_editor._open_file(test_file)
-        QTest.qWait(50)
+        app.processEvents()
 
         # Get the hex view
         current_widget = window._hex_editor._tab_widget.currentWidget()
@@ -122,6 +128,7 @@ def test_hex_view_red_color():
         return True
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -132,10 +139,8 @@ def test_save_clears_red_color():
     print("Test 3: Save Clears Red Color")
     print("=" * 60)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(100)
 
     # Create a test file
     with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.bin') as f:
@@ -144,7 +149,7 @@ def test_save_clears_red_color():
 
     try:
         window._hex_editor._open_file(test_file)
-        QTest.qWait(50)
+        app.processEvents()
 
         # Modify data
         doc = window._hex_editor._document_model.current_document
@@ -157,7 +162,7 @@ def test_save_clears_red_color():
 
         # Save
         doc.save()
-        QTest.qWait(50)
+        app.processEvents()
 
         # Check if state changed back to UNCHANGED
         if not log(doc.file_state == FileState.UNCHANGED,
@@ -168,6 +173,7 @@ def test_save_clears_red_color():
         return True
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -178,10 +184,8 @@ def test_different_display_modes():
     print("Test 4: Red Color in Different Display Modes")
     print("=" * 60)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(100)
 
     # Create a test file
     with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.bin') as f:
@@ -190,7 +194,7 @@ def test_different_display_modes():
 
     try:
         window._hex_editor._open_file(test_file)
-        QTest.qWait(50)
+        app.processEvents()
 
         # Modify data
         doc = window._hex_editor._document_model.current_document
@@ -199,17 +203,18 @@ def test_different_display_modes():
         modes = ["hex", "binary", "octal"]
         for mode in modes:
             window._hex_editor.set_display_mode(mode)
-            QTest.qWait(10)
+            app.processEvents()
 
         window._hex_editor.set_ascii_visible(False)
-        QTest.qWait(10)
+        app.processEvents()
         window._hex_editor.set_ascii_visible(True)
-        QTest.qWait(10)
+        app.processEvents()
 
         log(True, f"Switched through display modes and ASCII visibility: {modes}")
         return True
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -220,10 +225,8 @@ def test_undo_redo_behavior():
     print("Test 5: Undo/Redo Behavior")
     print("=" * 60)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(100)
 
     # Create a test file
     with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.bin') as f:
@@ -232,7 +235,7 @@ def test_undo_redo_behavior():
 
     try:
         window._hex_editor._open_file(test_file)
-        QTest.qWait(50)
+        app.processEvents()
 
         # Modify data
         doc = window._hex_editor._document_model.current_document
@@ -247,7 +250,7 @@ def test_undo_redo_behavior():
         from src.models.undo_stack import ReplaceCommand
         window._hex_editor._undo_stack.push(ReplaceCommand(2, b'\x02', b'\xFF'))
         window._hex_editor.undo()
-        QTest.qWait(10)
+        app.processEvents()
 
         # Check if undo changed state back to UNCHANGED
         # Note: This depends on how undo is implemented
@@ -255,12 +258,13 @@ def test_undo_redo_behavior():
 
         # Redo
         window._hex_editor.redo()
-        QTest.qWait(10)
+        app.processEvents()
         log(True, "Redo operation completed")
 
         return True
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 

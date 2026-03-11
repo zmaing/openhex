@@ -23,7 +23,6 @@ os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtWidgets import QApplication
 from PyQt6.QtTest import QTest
 from PyQt6.QtGui import QColor
 
@@ -39,6 +38,15 @@ def log(status, message):
     symbol = "PASS" if status else "FAIL"
     print(f"[{symbol}] {message}")
     return status
+
+
+def _close_window(window):
+    """Close a test window without triggering save prompts."""
+    document_model = getattr(window._hex_editor, "_document_model", None)
+    if document_model is not None:
+        for document in document_model.documents:
+            document.file_state = FileState.UNCHANGED
+    window.close()
 
 
 def clear_test_stats():
@@ -79,7 +87,7 @@ def test_basic_modification(stats):
     print("TEST 1: Basic Modification - Single Byte Shows Red")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -117,6 +125,7 @@ def test_basic_modification(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -127,7 +136,7 @@ def test_save_clears_red(stats):
     print("TEST 2: Save Clears Red Color")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -165,6 +174,7 @@ def test_save_clears_red(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -175,7 +185,7 @@ def test_multiple_modifications(stats):
     print("TEST 3: Multiple Modifications")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -211,6 +221,7 @@ def test_multiple_modifications(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -221,7 +232,7 @@ def test_display_modes(stats):
     print("TEST 4: Red Color in Different Display Modes")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -268,6 +279,7 @@ def test_display_modes(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -278,7 +290,7 @@ def test_undo_redo(stats):
     print("TEST 5: Undo/Redo Behavior")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -320,6 +332,7 @@ def test_undo_redo(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -330,7 +343,7 @@ def test_delete_operation(stats):
     print("TEST 6: Delete Operation")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -368,6 +381,7 @@ def test_delete_operation(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -378,7 +392,7 @@ def test_insert_operation(stats):
     print("TEST 7: Insert Operation")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -411,6 +425,7 @@ def test_insert_operation(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -421,7 +436,7 @@ def test_boundary_conditions(stats):
     print("TEST 8: Boundary Conditions")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -454,6 +469,7 @@ def test_boundary_conditions(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 
@@ -464,7 +480,7 @@ def test_new_file(stats):
     print("TEST 9: New File Modifications")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -487,7 +503,7 @@ def test_new_file(stats):
     passed = data == b'Hello World!'
     details = f"Written data: {data}" if not passed else "Data written to new file correctly"
     result = record_test(stats, "New File Modifications", passed, details)
-
+    _close_window(window)
     return result
 
 
@@ -497,7 +513,7 @@ def test_performance_large_file(stats):
     print("TEST 10: Performance with Larger File")
     print("-" * 70)
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     window.show()
     QTest.qWait(100)
@@ -535,6 +551,7 @@ def test_performance_large_file(stats):
         return result
 
     finally:
+        _close_window(window)
         if os.path.exists(test_file):
             os.unlink(test_file)
 

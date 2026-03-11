@@ -8,7 +8,7 @@ from datetime import datetime
 import html
 import os
 
-from PyQt6.QtCore import QEvent, QModelIndex, QRect, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QModelIndex, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QFrame,
@@ -337,8 +337,6 @@ class FileTreeModel(QStandardItemModel):
             path = os.path.join(parent_item.path, name)
             child = FileItem(path, True, self._show_hidden)
             parent_item.appendRow(child)
-            # Add placeholder for lazy loading
-            child.appendRow(QStandardItem())
 
         # Add files
         for name in sorted(files):
@@ -428,16 +426,20 @@ class FileBrowser(QWidget):
         self._tree_view.setItemDelegate(FileTreeDelegate(self._tree_view))
         self._tree_view.setAnimated(True)
         self._tree_view.setIndentation(16)
-        self._tree_view.setSortingEnabled(True)
-        self._tree_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        # The model already inserts children in sorted order. Keeping view-level
+        # sorting enabled on a lazily loaded tree can reorder rows during
+        # expansion and destabilize Qt's internal layout bookkeeping on macOS.
+        self._tree_view.setSortingEnabled(False)
         self._tree_view.setSelectionMode(QTreeView.SelectionMode.SingleSelection)
         self._tree_view.setHeaderHidden(True)
+        # Directory expansion is handled explicitly in _on_item_double_clicked.
+        # Leaving Qt's default double-click expansion enabled causes the same
+        # directory toggle to run twice and can race with lazy loading.
+        self._tree_view.setExpandsOnDoubleClick(False)
 
         # Connect signals
         self._tree_view.clicked.connect(self._on_item_clicked)
         self._tree_view.doubleClicked.connect(self._on_item_double_clicked)
-        self._tree_view.expanded.connect(self._on_item_expanded)
-
         # Style
         self._tree_view.setStyleSheet("""
             QTreeView {
@@ -542,16 +544,17 @@ class FileBrowser(QWidget):
             if not item.is_dir:
                 self.file_double_clicked.emit(item.path)
             else:
-                # Toggle directory expansion
-                if self._tree_view.isExpanded(index):
-                    self._tree_view.collapse(index)
-                else:
-                    self._tree_view.expand(index)
+                # Defer toggling until the current mouse event fully unwinds.
+                QTimer.singleShot(0, lambda idx=index: self._toggle_directory(idx))
 
-    def _on_item_expanded(self, index: QModelIndex):
-        """Handle item expansion."""
-        # Trigger lazy loading
-        self._model.fetchMore(index)
+    def _toggle_directory(self, index: QModelIndex):
+        """Expand or collapse a directory outside the active mouse event."""
+        if not index.isValid():
+            return
+        if self._tree_view.isExpanded(index):
+            self._tree_view.collapse(index)
+        else:
+            self._tree_view.expand(index)
 
     def _collapse_all(self):
         """Collapse all tree items."""

@@ -47,8 +47,7 @@ def test_structure_panel_toggle_and_parse_current_row():
 
     file_path = None
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(50)
+    app.processEvents()
 
     try:
         editor = window._hex_editor
@@ -58,7 +57,7 @@ def test_structure_panel_toggle_and_parse_current_row():
         assert not editor.is_structure_panel_visible()
 
         structure_action.trigger()
-        QTest.qWait(10)
+        app.processEvents()
 
         assert structure_action.isChecked()
         assert editor.is_structure_panel_visible()
@@ -87,7 +86,7 @@ def test_structure_panel_toggle_and_parse_current_row():
             file_path = handle.name
 
         editor.open_file(file_path)
-        QTest.qWait(50)
+        app.processEvents()
 
         assert panel._table.rowCount() == 3
         assert panel._table.item(0, 0).text() == "type"
@@ -96,7 +95,7 @@ def test_structure_panel_toggle_and_parse_current_row():
         assert panel._table.item(2, 1).text() == "48 49"
 
         panel._decimal_radio.click()
-        QTest.qWait(10)
+        app.processEvents()
 
         assert panel._table.item(0, 1).text() == "171"
         assert panel._table.item(1, 1).text() == "4660"
@@ -129,8 +128,7 @@ def test_structure_panel_can_update_and_delete_saved_configs():
     settings.sync()
 
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(50)
+    app.processEvents()
 
     try:
         panel = window._hex_editor._structure_panel
@@ -200,8 +198,7 @@ def test_structure_panel_renders_bitfields_and_flexible_arrays():
     settings.sync()
 
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(50)
+    app.processEvents()
 
     try:
         panel = window._hex_editor._structure_panel
@@ -228,7 +225,7 @@ def test_structure_panel_renders_bitfields_and_flexible_arrays():
         assert panel._table.item(4, 1).text() == "[0xAA, 0xBB]"
 
         panel._decimal_radio.click()
-        QTest.qWait(10)
+        app.processEvents()
 
         assert panel._table.item(1, 1).text() == "1"
         assert panel._table.item(2, 1).text() == "2"
@@ -258,8 +255,7 @@ def test_structure_panel_renders_nested_struct_fields():
     settings.sync()
 
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(50)
+    app.processEvents()
 
     try:
         panel = window._hex_editor._structure_panel
@@ -289,7 +285,7 @@ def test_structure_panel_renders_nested_struct_fields():
         assert panel._table.item(3, 1).text() == "0x03"
 
         panel._decimal_radio.click()
-        QTest.qWait(10)
+        app.processEvents()
 
         assert panel._table.item(1, 1).text() == "2"
         assert panel._table.item(2, 1).text() == "5"
@@ -319,8 +315,7 @@ def test_structure_panel_renders_external_struct_type_references():
     settings.sync()
 
     window = OpenHexMainWindow()
-    window.show()
-    QTest.qWait(50)
+    app.processEvents()
 
     try:
         panel = window._hex_editor._structure_panel
@@ -358,7 +353,7 @@ def test_structure_panel_renders_external_struct_type_references():
         assert panel._table.item(3, 1).text() == "0x1234"
 
         panel._decimal_radio.click()
-        QTest.qWait(10)
+        app.processEvents()
 
         assert panel._table.item(0, 1).text() == "2"
         assert panel._table.item(1, 1).text() == "5"
