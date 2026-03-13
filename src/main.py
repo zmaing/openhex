@@ -5,13 +5,16 @@ Main application window with menu bar, toolbar, and central widget.
 """
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QStatusBar, QToolBar, QMenuBar, QMenu)
+                             QStatusBar, QToolBar, QMenuBar, QMenu, QFrame,
+                             QSizePolicy, QLabel)
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction, QIcon, QKeySequence, QActionGroup
+from PyQt6.QtGui import QAction, QIcon, QKeySequence, QActionGroup, QColor, QPalette, QPainter
 
 import os
+import sys
 
 from .ui.main_window import HexEditorMainWindow
+from .ui.design_system import CHROME
 from .core.data_model import ArrangementMode
 from .utils.i18n import tr
 
@@ -29,9 +32,17 @@ class OpenHexMainWindow(QMainWindow):
 
     def _init_window(self):
         """Initialize window properties."""
+        self.setObjectName("openhexMainWindow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(CHROME.workspace_bg))
+        self.setPalette(palette)
         self.setWindowTitle("openhex - AI Enhanced Binary Editor")
-        self.resize(1200, 800)
-        self.setMinimumSize(800, 600)
+        self.resize(1440, 920)
+        self.setMinimumSize(1080, 720)
+        if sys.platform == "darwin":
+            self.setUnifiedTitleAndToolBarOnMac(True)
 
         # Center window on screen
         from PyQt6.QtWidgets import QApplication
@@ -40,6 +51,12 @@ class OpenHexMainWindow(QMainWindow):
             (screen.width() - self.width()) // 2,
             (screen.height() - self.height()) // 2
         )
+
+    def paintEvent(self, event):
+        """Fill the native window background so rounded OS corners never expose light defaults."""
+        painter = QPainter(self)
+        painter.fillRect(event.rect(), QColor(CHROME.workspace_bg))
+        super().paintEvent(event)
 
     def _init_menus(self):
         """Initialize menu bar."""
@@ -212,10 +229,6 @@ class OpenHexMainWindow(QMainWindow):
         arrange_group.addAction(header_length_action)
         arrange_menu.addAction(header_length_action)
 
-        custom_action = QAction(self._tr("menu_custom"), self)
-        custom_action.triggered.connect(self._on_custom_arrangement)
-        arrange_menu.addAction(custom_action)
-
         # Store reference for updating
         self._arrange_equal_action = equal_frame_action
         self._arrange_header_action = header_length_action
@@ -260,7 +273,7 @@ class OpenHexMainWindow(QMainWindow):
 
         show_ai_panel_action = QAction(self._tr("menu_ai_panel"), self)
         show_ai_panel_action.setCheckable(True)
-        show_ai_panel_action.setChecked(True)
+        show_ai_panel_action.setChecked(False)
         show_ai_panel_action.triggered.connect(self._on_toggle_ai_panel)
         view_menu.addAction(show_ai_panel_action)
         self._show_ai_panel_action = show_ai_panel_action
@@ -320,82 +333,6 @@ class OpenHexMainWindow(QMainWindow):
         sync_cursor_action.triggered.connect(self._on_toggle_sync_cursor)
         multiview_menu.addAction(sync_cursor_action)
 
-        # Go Menu
-        go_menu = menubar.addMenu(self._tr("menu_go"))
-
-        # Back/Forward
-        back_action = QAction(self._tr("menu_back"), self)
-        back_action.setShortcut("Alt+Left")
-        back_action.setStatusTip("Go back in navigation history" if self._get_current_language() == "en" else "在导航历史中后退")
-        back_action.triggered.connect(self._on_go_back)
-        go_menu.addAction(back_action)
-
-        forward_action = QAction(self._tr("menu_forward"), self)
-        forward_action.setShortcut("Alt+Right")
-        forward_action.setStatusTip("Go forward in navigation history" if self._get_current_language() == "en" else "在导航历史中前进")
-        forward_action.triggered.connect(self._on_go_forward)
-        go_menu.addAction(forward_action)
-
-        go_menu.addSeparator()
-
-        toggle_bookmark_action = QAction(self._tr("menu_toggle_bookmark"), self)
-        toggle_bookmark_action.setShortcut("Ctrl+F2")
-        toggle_bookmark_action.setStatusTip("Toggle bookmark at cursor" if self._get_current_language() == "en" else "切换光标处的书签")
-        toggle_bookmark_action.triggered.connect(self._on_toggle_bookmark)
-        go_menu.addAction(toggle_bookmark_action)
-
-        go_menu.addSeparator()
-
-        next_bookmark_action = QAction(self._tr("menu_next_bookmark"), self)
-        next_bookmark_action.setShortcut("F2")
-        next_bookmark_action.setStatusTip("Go to next bookmark" if self._get_current_language() == "en" else "跳转到下一个书签")
-        next_bookmark_action.triggered.connect(self._on_next_bookmark)
-        go_menu.addAction(next_bookmark_action)
-
-        prev_bookmark_action = QAction(self._tr("menu_prev_bookmark"), self)
-        prev_bookmark_action.setShortcut("Shift+F2")
-        prev_bookmark_action.setStatusTip("Go to previous bookmark" if self._get_current_language() == "en" else "跳转到上一个书签")
-        prev_bookmark_action.triggered.connect(self._on_prev_bookmark)
-        go_menu.addAction(prev_bookmark_action)
-
-        # Tools Menu
-        tools_menu = menubar.addMenu(self._tr("menu_tools"))
-
-        compare_action = QAction(self._tr("menu_compare"), self)
-        compare_action.setStatusTip("Compare two files" if self._get_current_language() == "en" else "比较两个文件")
-        compare_action.triggered.connect(self._on_compare_files)
-        tools_menu.addAction(compare_action)
-
-        checksum_action = QAction(self._tr("menu_checksum"), self)
-        checksum_action.setStatusTip("Calculate file checksum" if self._get_current_language() == "en" else "计算文件校验和")
-        checksum_action.triggered.connect(self._on_checksum)
-        tools_menu.addAction(checksum_action)
-
-        # AI Menu
-        ai_menu = menubar.addMenu(self._tr("menu_ai"))
-
-        analyze_action = QAction(self._tr("menu_analyze"), self)
-        analyze_action.setStatusTip("Analyze selected data with AI" if self._get_current_language() == "en" else "用AI分析选中的数据")
-        analyze_action.triggered.connect(self._on_analyze)
-        ai_menu.addAction(analyze_action)
-
-        detect_pattern_action = QAction(self._tr("menu_detect_patterns"), self)
-        detect_pattern_action.setStatusTip("Detect data patterns with AI" if self._get_current_language() == "en" else "用AI检测数据模式")
-        detect_pattern_action.triggered.connect(self._on_detect_patterns)
-        ai_menu.addAction(detect_pattern_action)
-
-        generate_code_action = QAction(self._tr("menu_generate_code"), self)
-        generate_code_action.setStatusTip("Generate code to parse selected data" if self._get_current_language() == "en" else "生成解析选中数据的代码")
-        generate_code_action.triggered.connect(self._on_generate_code)
-        ai_menu.addAction(generate_code_action)
-
-        ai_menu.addSeparator()
-
-        ai_settings_action = QAction(self._tr("menu_ai_settings"), self)
-        ai_settings_action.setStatusTip("Configure AI settings" if self._get_current_language() == "en" else "配置AI设置")
-        ai_settings_action.triggered.connect(self._on_ai_settings)
-        ai_menu.addAction(ai_settings_action)
-
         # Preferences Menu
         prefs_menu = menubar.addMenu(self._tr("menu_preferences"))
 
@@ -433,121 +370,160 @@ class OpenHexMainWindow(QMainWindow):
         """Initialize toolbars."""
         # Main toolbar
         main_toolbar = QToolBar("Main")
+        main_toolbar.setObjectName("mainToolbar")
         main_toolbar.setMovable(False)
         main_toolbar.setFloatable(False)
-        main_toolbar.setIconSize(QSize(16, 16))
+        main_toolbar.setIconSize(QSize(14, 14))
         main_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        main_toolbar.setStyleSheet("""
-            QToolBar {
-                background: #2d2d30;
+        main_toolbar.setMinimumHeight(CHROME.toolbar_height + 2)
+        main_toolbar.setStyleSheet(f"""
+            QToolBar {{
+                background: {CHROME.workspace_bg};
                 border: none;
-                border-bottom: 1px solid #1f1f1f;
-                spacing: 4px;
-                padding: 3px 8px;
-            }
-            QToolBar::separator {
-                width: 1px;
-                margin: 3px 6px;
-                background: #3f3f46;
-            }
-            QToolButton#toolbarButton {
+                border-bottom: 1px solid {CHROME.border};
+                spacing: 0px;
+                padding: 4px 8px 4px 8px;
+            }}
+            QWidget#toolbarHost {{
+                background: transparent;
+            }}
+            QWidget#toolbarLeadingCluster {{
+                background: transparent;
+            }}
+            QFrame#toolbarGroup,
+            QFrame#toolbarFieldGroup {{
+                background: {CHROME.surface};
+                border: 1px solid {CHROME.border};
+                border-radius: 8px;
+                min-height: 30px;
+            }}
+            QFrame#toolbarFieldGroup {{
+                padding-left: 3px;
+                padding-right: 3px;
+            }}
+            QFrame#toolbarDivider {{
+                background: {CHROME.border_strong};
+                min-width: 1px;
+                max-width: 1px;
+                min-height: 14px;
+                margin: 6px 1px;
+            }}
+            QToolButton#toolbarButton {{
                 background: transparent;
                 border: 1px solid transparent;
-                border-radius: 3px;
+                border-radius: 7px;
                 padding: 0;
-                min-width: 24px;
-                max-width: 24px;
-                min-height: 24px;
-                max-height: 24px;
-            }
-            QToolButton#toolbarButton:hover {
-                background: #3a3d41;
-                border-color: #45494e;
-            }
-            QToolButton#toolbarButton:pressed {
-                background: #41454b;
-                border-color: #4f555c;
-            }
-            QWidget#toolbarFieldGroup {
+                min-width: 26px;
+                max-width: 26px;
+                min-height: 26px;
+                max-height: 26px;
+            }}
+            QToolButton#toolbarButton:hover {{
+                background: {CHROME.surface_alt};
+                border-color: {CHROME.border};
+            }}
+            QToolButton#toolbarButton:pressed {{
+                background: {CHROME.surface_raised};
+                border-color: {CHROME.border_strong};
+            }}
+            QLabel#toolbarLabel {{
+                color: {CHROME.text_secondary};
                 background: transparent;
-                border: none;
-            }
-            QLabel#toolbarLabel {
-                color: #cccccc;
-                background: transparent;
-                font-size: 11px;
-                font-weight: 500;
-                padding: 0 0 0 2px;
-            }
-            QSpinBox#toolbarSpinBox {
-                background: #1f1f1f;
-                color: #cccccc;
-                border: 1px solid #3c3c3c;
-                border-radius: 3px;
-                padding: 0 18px 0 6px;
-                min-width: 42px;
-                min-height: 24px;
-                selection-background-color: #094771;
-                selection-color: #ffffff;
-            }
-            QSpinBox#toolbarSpinBox:hover {
-                border-color: #4f4f56;
-            }
-            QSpinBox#toolbarSpinBox:focus {
-                border-color: #007fd4;
-            }
-            QSpinBox#toolbarSpinBox::up-button {
+                font-size: 10px;
+                font-weight: 600;
+                padding: 0 2px 0 6px;
+            }}
+            QSpinBox#toolbarSpinBox {{
+                background: {CHROME.workspace_bg};
+                color: {CHROME.text_primary};
+                border: 1px solid {CHROME.border};
+                border-radius: 7px;
+                padding: 0 15px 0 7px;
+                min-width: 54px;
+                min-height: 26px;
+                selection-background-color: {CHROME.accent};
+                selection-color: {CHROME.text_primary};
+            }}
+            QSpinBox#toolbarSpinBox:hover {{
+                border-color: {CHROME.text_muted};
+            }}
+            QSpinBox#toolbarSpinBox:focus {{
+                border-color: {CHROME.accent};
+            }}
+            QSpinBox#toolbarSpinBox::up-button {{
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 12px;
-                height: 9px;
+                width: 10px;
+                height: 8px;
                 margin: 2px 3px 0 0;
                 border: none;
-                border-left: 1px solid #3c3c3c;
-                border-top-right-radius: 2px;
-                background: #252526;
-            }
-            QSpinBox#toolbarSpinBox::down-button {
+                border-left: 1px solid {CHROME.border};
+                border-top-right-radius: 4px;
+                background: {CHROME.surface_alt};
+            }}
+            QSpinBox#toolbarSpinBox::down-button {{
                 subcontrol-origin: padding;
                 subcontrol-position: bottom right;
-                width: 12px;
-                height: 9px;
+                width: 10px;
+                height: 8px;
                 margin: 0 3px 2px 0;
                 border: none;
-                border-left: 1px solid #3c3c3c;
-                border-bottom-right-radius: 2px;
-                background: #252526;
-            }
+                border-left: 1px solid {CHROME.border};
+                border-bottom-right-radius: 4px;
+                background: {CHROME.surface_alt};
+            }}
             QSpinBox#toolbarSpinBox::up-arrow,
-            QSpinBox#toolbarSpinBox::down-arrow {
-                width: 6px;
-                height: 6px;
-            }
+            QSpinBox#toolbarSpinBox::down-arrow {{
+                width: 5px;
+                height: 5px;
+            }}
         """)
         self.addToolBar(main_toolbar)
 
-        # Add icon actions as explicit buttons so toolbar styling stays consistent.
-        main_toolbar.addWidget(self._create_toolbar_button("new", self._tr("menu_new"), self._on_new_file))
-        main_toolbar.addWidget(self._create_toolbar_button("open", self._tr("menu_open"), self._on_open_file))
-        main_toolbar.addWidget(self._create_toolbar_button("save", self._tr("menu_save"), self._on_save_file))
-        main_toolbar.addSeparator()
-        main_toolbar.addWidget(self._create_toolbar_button("undo", self._tr("menu_undo"), self._on_undo))
-        main_toolbar.addWidget(self._create_toolbar_button("redo", self._tr("menu_redo"), self._on_redo))
-        main_toolbar.addSeparator()
-        main_toolbar.addWidget(self._create_toolbar_button("find", self._tr("menu_find"), self._on_find))
+        # Arrangement parameter input
+        from PyQt6.QtWidgets import QSpinBox, QAbstractSpinBox
+
+        toolbar_host = QWidget(self)
+        toolbar_host.setObjectName("toolbarHost")
+        toolbar_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toolbar_host.setMinimumHeight(CHROME.toolbar_height)
+        host_layout = QHBoxLayout(toolbar_host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+
+        leading_cluster = QWidget(toolbar_host)
+        leading_cluster.setObjectName("toolbarLeadingCluster")
+        leading_layout = QHBoxLayout(leading_cluster)
+        leading_layout.setContentsMargins(0, 0, 0, 0)
+        leading_layout.setSpacing(6)
+
+        file_group, file_layout = self._create_toolbar_group()
+        self._add_toolbar_group_button(file_layout, "new", self._tr("menu_new"), self._on_new_file)
+        self._add_toolbar_divider(file_layout)
+        self._add_toolbar_group_button(file_layout, "open", self._tr("menu_open"), self._on_open_file)
+        self._add_toolbar_divider(file_layout)
+        self._add_toolbar_group_button(file_layout, "save", self._tr("menu_save"), self._on_save_file)
+        leading_layout.addWidget(file_group)
+
+        history_group, history_layout = self._create_toolbar_group()
+        self._add_toolbar_group_button(history_layout, "undo", self._tr("menu_undo"), self._on_undo)
+        self._add_toolbar_divider(history_layout)
+        self._add_toolbar_group_button(history_layout, "redo", self._tr("menu_redo"), self._on_redo)
+        leading_layout.addWidget(history_group)
+
+        search_group, search_layout = self._create_toolbar_group()
+        self._add_toolbar_group_button(search_layout, "find", self._tr("menu_find"), self._on_find)
+        self._add_toolbar_divider(search_layout)
         self._filter_toolbar_button = self._create_toolbar_button("filter", self._tr("menu_filter"), self._on_filter)
         self._filter_toolbar_button.setStatusTip("Filter rows in the current view" if self._get_current_language() == "en" else "过滤当前视图中的行")
-        main_toolbar.addWidget(self._filter_toolbar_button)
-        main_toolbar.addSeparator()
-
-        # Arrangement parameter input
-        from PyQt6.QtWidgets import QLabel, QSpinBox, QAbstractSpinBox
+        search_layout.addWidget(self._filter_toolbar_button)
+        leading_layout.addWidget(search_group)
 
         # Length label and input - used for both EQUAL_FRAME (bytes per row) and HEADER_LENGTH (header bytes)
-        field_group = QWidget()
+        field_group = QFrame()
         field_group.setObjectName("toolbarFieldGroup")
         field_layout = QHBoxLayout(field_group)
-        field_layout.setContentsMargins(0, 0, 0, 0)
+        field_layout.setContentsMargins(3, 2, 3, 2)
         field_layout.setSpacing(4)
 
         length_label = QLabel("长度:")
@@ -561,14 +537,63 @@ class OpenHexMainWindow(QMainWindow):
         self._length_spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
         self._length_spinbox.setFrame(False)
         self._length_spinbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._length_spinbox.setMaximumWidth(64)
+        self._length_spinbox.setFixedWidth(64)
         self._length_spinbox.valueChanged.connect(self._on_arrangement_length_changed)
         field_layout.addWidget(self._length_spinbox)
-        main_toolbar.addWidget(field_group)
+
+        self._add_toolbar_divider(field_layout)
+
+        start_offset_label = QLabel("Start:" if self._get_current_language() == "en" else "数据起点:")
+        start_offset_label.setObjectName("toolbarLabel")
+        field_layout.addWidget(start_offset_label)
+
+        self._start_offset_spinbox = QSpinBox()
+        self._start_offset_spinbox.setObjectName("toolbarSpinBox")
+        self._start_offset_spinbox.setRange(0, 0)
+        self._start_offset_spinbox.setValue(0)
+        self._start_offset_spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
+        self._start_offset_spinbox.setFrame(False)
+        self._start_offset_spinbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._start_offset_spinbox.setFixedWidth(84)
+        self._start_offset_spinbox.setToolTip(
+            "Set the byte offset used as the display and arrangement start"
+            if self._get_current_language() == "en"
+            else "设置用于显示和排列起点的字节偏移"
+        )
+        self._start_offset_spinbox.setStatusTip(self._start_offset_spinbox.toolTip())
+        self._start_offset_spinbox.valueChanged.connect(self._on_arrangement_start_offset_changed)
+        field_layout.addWidget(self._start_offset_spinbox)
+
+        leading_layout.addWidget(field_group)
+
+        host_layout.addWidget(leading_cluster, 0, Qt.AlignmentFlag.AlignVCenter)
+        host_layout.addStretch(1)
+        main_toolbar.addWidget(toolbar_host)
 
         # Store references for updating
         self._toolbar_length_label = length_label
+        self._toolbar_start_offset_label = start_offset_label
         self._toolbar_length_group = field_group
+
+    def _create_toolbar_group(self):
+        """Create a capsule toolbar group with a horizontal layout."""
+        group = QFrame()
+        group.setObjectName("toolbarGroup")
+        layout = QHBoxLayout(group)
+        layout.setContentsMargins(3, 2, 3, 2)
+        layout.setSpacing(2)
+        return group, layout
+
+    def _add_toolbar_group_button(self, layout, icon_name: str, tooltip: str, slot):
+        """Append a toolbar button into a capsule group."""
+        layout.addWidget(self._create_toolbar_button(icon_name, tooltip, slot))
+
+    def _add_toolbar_divider(self, layout):
+        """Append a subtle divider between toolbar controls."""
+        divider = QFrame()
+        divider.setObjectName("toolbarDivider")
+        divider.setFrameShape(QFrame.Shape.VLine)
+        layout.addWidget(divider)
 
     def _create_toolbar_button(self, icon_name: str, tooltip: str, slot):
         """Create a consistent toolbar button."""
@@ -579,8 +604,9 @@ class OpenHexMainWindow(QMainWindow):
         button.setAutoRaise(False)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         button.setIcon(self._get_icon(icon_name))
-        button.setIconSize(QSize(16, 16))
+        button.setIconSize(QSize(14, 14))
         button.setToolTip(tooltip)
+        button.setStatusTip(tooltip)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.clicked.connect(slot)
@@ -600,131 +626,116 @@ class OpenHexMainWindow(QMainWindow):
     def _init_status_bar(self):
         """Initialize status bar."""
         self.statusBar().showMessage("Ready")
-        self.statusBar().setStyleSheet("""
-            QStatusBar {
-                background-color: #252526;
-                color: #cccccc;
-                border-top: 1px solid #3c3c3c;
-            }
+        self.statusBar().setSizeGripEnabled(False)
+        self.statusBar().setStyleSheet(f"""
+            QStatusBar {{
+                background-color: {CHROME.workspace_bg};
+                color: {CHROME.text_muted};
+                border: none;
+                border-top: 1px solid {CHROME.border};
+                padding: 0 8px;
+                min-height: 22px;
+                font-size: 10px;
+            }}
+            QStatusBar::item {{
+                border: none;
+                padding: 0 4px;
+            }}
         """)
 
     def _get_icon(self, name: str) -> QIcon:
-        """Get icon by name using system theme icons."""
-        # Try to get system icons
-        icon_map = {
-            "new": "document-new",
-            "open": "document-open",
-            "save": "document-save",
-            "undo": "edit-undo",
-            "redo": "edit-redo",
-            "find": "edit-find",
-            "filter": "view-filter",
-        }
-        theme_name = icon_map.get(name)
+        """Return a unified linear icon for the toolbar."""
+        icon = QIcon()
+        states = (
+            (QIcon.Mode.Normal, QIcon.State.Off, QColor(CHROME.text_secondary)),
+            (QIcon.Mode.Active, QIcon.State.Off, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Selected, QIcon.State.Off, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Disabled, QIcon.State.Off, QColor(CHROME.text_muted)),
+            (QIcon.Mode.Normal, QIcon.State.On, QColor(CHROME.accent_hover)),
+            (QIcon.Mode.Active, QIcon.State.On, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Selected, QIcon.State.On, QColor(CHROME.text_primary)),
+        )
+        for mode, state, color in states:
+            icon.addPixmap(self._create_toolbar_icon_pixmap(name, color), mode, state)
+        return icon
 
-        if theme_name:
-            icon = QIcon.fromTheme(theme_name)
-            if not icon.isNull():
-                return icon
+    def _create_toolbar_icon_pixmap(self, name: str, color: QColor):
+        """Render a toolbar icon using a shared 24px linear grid."""
+        from PyQt6.QtGui import QPixmap, QPainter, QPen, QPainterPath
 
-        # Fallback: create simple geometric icons
-        from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QPainterPath
-
-        size = 24
+        size = 18
         pixmap = QPixmap(size, size)
-        pixmap.fill(QColor(0, 0, 0, 0))  # Transparent
+        pixmap.fill(QColor(0, 0, 0, 0))
 
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen()
-        pen.setWidth(2)
-
-        stroke_color = QColor("#cccccc")
+        pen = QPen(color)
+        pen.setWidthF(1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
 
         if name == "new":
-            # Plus icon
-            pen.setColor(stroke_color)
-            painter.setPen(pen)
-            painter.drawLine(12, 5, 12, 19)
-            painter.drawLine(5, 12, 19, 12)
+            painter.drawLine(9, 4, 9, 14)
+            painter.drawLine(4, 9, 14, 9)
         elif name == "open":
-            # Folder icon
-            pen.setColor(stroke_color)
-            painter.setPen(pen)
             path = QPainterPath()
-            path.moveTo(4, 8)
-            path.lineTo(4, 20)
-            path.lineTo(20, 20)
-            path.lineTo(20, 8)
-            path.lineTo(12, 4)
-            path.lineTo(4, 8)
+            path.moveTo(5.5, 13.5)
+            path.lineTo(13.5, 5.5)
+            path.moveTo(10.0, 5.5)
+            path.lineTo(13.5, 5.5)
+            path.lineTo(13.5, 9.0)
+            path.moveTo(5.5, 9.0)
+            path.lineTo(5.5, 13.5)
+            path.lineTo(10.0, 13.5)
             painter.drawPath(path)
-            painter.drawLine(4, 8, 12, 4)
         elif name == "save":
-            # Save icon (arrow down to disk)
-            pen.setColor(stroke_color)
-            painter.setPen(pen)
-            # Disk outline
             path = QPainterPath()
-            path.moveTo(5, 6)
-            path.lineTo(5, 18)
-            path.lineTo(19, 18)
-            path.lineTo(19, 6)
-            path.lineTo(5, 6)
+            path.moveTo(5.5, 12.0)
+            path.lineTo(5.5, 13.0)
+            path.quadTo(5.5, 14.5, 7.0, 14.5)
+            path.lineTo(11.0, 14.5)
+            path.quadTo(12.5, 14.5, 12.5, 13.0)
+            path.lineTo(12.5, 12.0)
             painter.drawPath(path)
-            # Arrow
-            painter.drawLine(12, 10, 12, 15)
-            painter.drawLine(9, 12, 12, 15)
-            painter.drawLine(15, 12, 12, 15)
+            painter.drawLine(9, 4, 9, 10)
+            painter.drawLine(8, 8, 9, 10)
+            painter.drawLine(10, 8, 9, 10)
         elif name == "undo":
-            # Undo arrow
-            pen.setColor(stroke_color)
-            painter.setPen(pen)
             path = QPainterPath()
-            path.moveTo(16, 6)
-            path.quadTo(8, 6, 8, 12)
-            path.quadTo(8, 18, 16, 18)
+            path.moveTo(12.5, 5.8)
+            path.quadTo(7.2, 5.8, 7.2, 9.0)
+            path.quadTo(7.2, 12.2, 11.2, 12.2)
             painter.drawPath(path)
-            painter.drawLine(8, 12, 12, 8)
-            painter.drawLine(8, 12, 12, 16)
+            painter.drawLine(7, 9, 9, 7)
+            painter.drawLine(7, 9, 9, 11)
         elif name == "redo":
-            # Redo arrow
-            pen.setColor(stroke_color)
-            painter.setPen(pen)
             path = QPainterPath()
-            path.moveTo(8, 6)
-            path.quadTo(16, 6, 16, 12)
-            path.quadTo(16, 18, 8, 18)
+            path.moveTo(5.5, 5.8)
+            path.quadTo(10.8, 5.8, 10.8, 9.0)
+            path.quadTo(10.8, 12.2, 6.8, 12.2)
             painter.drawPath(path)
-            painter.drawLine(16, 12, 12, 8)
-            painter.drawLine(16, 12, 12, 16)
+            painter.drawLine(11, 9, 9, 7)
+            painter.drawLine(11, 9, 9, 11)
         elif name == "find":
-            # Magnifying glass
-            pen.setColor(stroke_color)
-            painter.setPen(pen)
-            painter.drawEllipse(8, 8, 8, 8)
-            painter.drawLine(14, 14, 19, 19)
+            painter.drawEllipse(5, 5, 7, 7)
+            painter.drawLine(11, 11, 13, 13)
         elif name == "filter":
-            # Simple funnel icon
-            pen.setColor(stroke_color)
-            painter.setPen(pen)
             path = QPainterPath()
-            path.moveTo(5, 6)
-            path.lineTo(19, 6)
-            path.lineTo(14, 12)
-            path.lineTo(14, 18)
-            path.lineTo(10, 20)
-            path.lineTo(10, 12)
-            path.lineTo(5, 6)
+            path.moveTo(4.5, 5.5)
+            path.lineTo(13.5, 5.5)
+            path.lineTo(10.5, 9.0)
+            path.lineTo(10.5, 11.8)
+            path.lineTo(7.5, 13.5)
+            path.lineTo(7.5, 9.0)
+            path.closeSubpath()
             painter.drawPath(path)
         else:
-            # Default circle
-            pen.setColor(stroke_color)
-            painter.setPen(pen)
-            painter.drawEllipse(6, 6, 12, 12)
+            painter.drawEllipse(4, 4, 10, 10)
 
         painter.end()
-        return QIcon(pixmap)
+        return pixmap
 
     # File menu handlers
     def _on_new_file(self):
@@ -805,10 +816,6 @@ class OpenHexMainWindow(QMainWindow):
         """Handle arrangement mode change."""
         self._hex_editor.set_arrangement_mode(mode)
 
-    def _on_custom_arrangement(self):
-        """Handle custom arrangement."""
-        self._hex_editor.show_arrangement_dialog()
-
     def _on_display_mode_changed(self, mode: str):
         """Handle display mode change."""
         action = self._display_mode_actions.get(mode)
@@ -839,6 +846,46 @@ class OpenHexMainWindow(QMainWindow):
         else:
             # 等长帧模式（默认）
             self._hex_editor.set_arrangement_length(value)
+
+    def _on_arrangement_start_offset_changed(self, value: int):
+        """Handle arrangement start offset change."""
+        self._hex_editor.set_arrangement_start_offset(value)
+
+    def _sync_arrangement_toolbar(
+        self,
+        *,
+        mode: ArrangementMode | None = None,
+        length_value: int | None = None,
+        length_range: tuple[int, int] | None = None,
+        start_offset: int | None = None,
+        max_start_offset: int | None = None,
+    ) -> None:
+        """Synchronize arrangement controls without retriggering editor updates."""
+        if hasattr(self, "_toolbar_length_label"):
+            if mode == ArrangementMode.HEADER_LENGTH:
+                self._toolbar_length_label.setText("Header:" if self._get_current_language() == "en" else "头长度:")
+            elif mode is not None:
+                self._toolbar_length_label.setText("Length:" if self._get_current_language() == "en" else "长度:")
+
+        if hasattr(self, "_toolbar_start_offset_label"):
+            self._toolbar_start_offset_label.setText("Start:" if self._get_current_language() == "en" else "数据起点:")
+
+        if hasattr(self, "_length_spinbox"):
+            blocked = self._length_spinbox.blockSignals(True)
+            if length_range is not None:
+                minimum, maximum = length_range
+                self._length_spinbox.setRange(int(minimum), int(maximum))
+            if length_value is not None:
+                self._length_spinbox.setValue(int(length_value))
+            self._length_spinbox.blockSignals(blocked)
+
+        if hasattr(self, "_start_offset_spinbox"):
+            blocked = self._start_offset_spinbox.blockSignals(True)
+            maximum = max(0, int(max_start_offset if max_start_offset is not None else self._start_offset_spinbox.maximum()))
+            self._start_offset_spinbox.setRange(0, maximum)
+            if start_offset is not None:
+                self._start_offset_spinbox.setValue(min(maximum, max(0, int(start_offset))))
+            self._start_offset_spinbox.blockSignals(blocked)
 
     def _on_toggle_file_tree(self):
         """Toggle file tree panel."""
@@ -1011,7 +1058,13 @@ class OpenHexMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event."""
-        if self._hex_editor.close_all_files():
+        hex_editor = getattr(self, "_hex_editor", None)
+        if hex_editor is None:
+            event.accept()
+            return
+
+        if hex_editor.close_all_files():
+            hex_editor.shutdown()
             event.accept()
         else:
             event.ignore()

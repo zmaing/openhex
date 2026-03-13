@@ -8,7 +8,9 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QProgressBar, QTextEdit,
                              QGroupBox)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
-from PyQt6.QtGui import QFont
+
+from .chrome import create_dialog_header
+from ..design_system import build_mono_font
 
 
 class NaturalLanguageSearchWorker(QThread):
@@ -69,9 +71,18 @@ class NaturalLanguageSearchDialog(QDialog):
     def _init_ui(self):
         """Initialize UI."""
         self.setWindowTitle("Natural Language Search")
-        self.resize(600, 500)
+        self.resize(660, 560)
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        layout.addWidget(
+            create_dialog_header(
+                "Natural Language Search",
+                "用自然语言搜索二进制内容，保持建议词、进度和结果区域与主界面相同的专业深色体系。",
+            )
+        )
 
         # Query input
         layout.addWidget(QLabel("Search Query:"))
@@ -82,6 +93,7 @@ class NaturalLanguageSearchDialog(QDialog):
         # Quick suggestions
         suggestions_group = QGroupBox("Quick Suggestions")
         suggestions_layout = QHBoxLayout()
+        suggestions_layout.setSpacing(8)
 
         suggestions = [
             "IP addresses",
@@ -115,13 +127,14 @@ class NaturalLanguageSearchDialog(QDialog):
         # Results
         results_group = QGroupBox("Results")
         results_layout = QVBoxLayout()
+        results_layout.setSpacing(10)
 
         self._results_count = QLabel("No results")
         results_layout.addWidget(self._results_count)
 
         self._results_text = QTextEdit()
         self._results_text.setReadOnly(True)
-        self._results_text.setFont(QFont("Monospace", 10))
+        self._results_text.setFont(build_mono_font(10))
         results_layout.addWidget(self._results_text)
 
         results_group.setLayout(results_layout)

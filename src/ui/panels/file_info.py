@@ -5,9 +5,9 @@ Displays file information.
 """
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
-from PyQt6.QtGui import QFont
 
 from ...utils.format import FormatUtils
+from ..design_system import build_mono_font
 
 
 class FileInfoPanel(QWidget):
@@ -60,13 +60,13 @@ class FileInfoPanel(QWidget):
         layout.addWidget(checksum_label)
 
         self._md5_label = QLabel("-")
-        self._md5_label.setFont(QFont("Monospace", 9))
+        self._md5_label.setFont(build_mono_font(9))
         self._md5_label.setWordWrap(True)
         layout.addWidget(QLabel("MD5:"))
         layout.addWidget(self._md5_label)
 
         self._sha256_label = QLabel("-")
-        self._sha256_label.setFont(QFont("Monospace", 9))
+        self._sha256_label.setFont(build_mono_font(9))
         self._sha256_label.setWordWrap(True)
         layout.addWidget(QLabel("SHA256:"))
         layout.addWidget(self._sha256_label)

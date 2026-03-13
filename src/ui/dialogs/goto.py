@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QRadioButton, QButtonGroup)
 from PyQt6.QtCore import Qt
 
+from .chrome import create_dialog_header, set_invalid_state
+
 
 class GotoDialog(QDialog):
     """
@@ -25,9 +27,18 @@ class GotoDialog(QDialog):
     def _init_ui(self):
         """Initialize UI."""
         self.setWindowTitle("Go To Offset")
-        self.resize(400, 180)
+        self.resize(460, 310)
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        layout.addWidget(
+            create_dialog_header(
+                "Go To Offset",
+                "快速跳转到十六进制偏移位置，并用统一的输入校验反馈替代旧式红底警告。",
+            )
+        )
 
         # Offset input
         layout.addWidget(QLabel("Enter offset:"))
@@ -39,6 +50,7 @@ class GotoDialog(QDialog):
         # Format selection
         format_group = QGroupBox("Format")
         format_layout = QHBoxLayout()
+        format_layout.setSpacing(10)
 
         self._format_group = QButtonGroup()
 
@@ -57,6 +69,7 @@ class GotoDialog(QDialog):
         # Reference point
         ref_group = QGroupBox("From")
         ref_layout = QHBoxLayout()
+        ref_layout.setSpacing(10)
 
         self._ref_group = QButtonGroup()
 
@@ -117,14 +130,11 @@ class GotoDialog(QDialog):
 
             # Validate
             if self._max_offset > 0 and value > self._max_offset:
-                self._offset_input.setStyleSheet("QLineEdit { background-color: #5c2b2b; }")
+                set_invalid_state(self._offset_input, True)
             else:
-                self._offset_input.setStyleSheet("")
+                set_invalid_state(self._offset_input, False)
         except (ValueError, TypeError):
-            if text:
-                self._offset_input.setStyleSheet("QLineEdit { background-color: #5c2b2b; }")
-            else:
-                self._offset_input.setStyleSheet("")
+            set_invalid_state(self._offset_input, bool(text))
 
     def get_offset(self) -> int:
         """Get entered offset."""

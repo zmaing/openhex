@@ -23,7 +23,7 @@ class Styles:
         """Get hex view specific styles."""
         return """
             HexView {
-                font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
+                font-family: 'Menlo', 'Monaco', 'Courier New';
                 font-size: 11px;
                 selection-background-color: #264f78;
                 selection-color: #ffffff;
@@ -37,7 +37,7 @@ class Styles:
             LineNumber {
                 background-color: #1e1e1e;
                 color: #858585;
-                font-family: 'Menlo', 'Consolas', monospace;
+                font-family: 'Menlo', 'Monaco', 'Courier New';
                 font-size: 11px;
             }
         """

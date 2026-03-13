@@ -8,11 +8,13 @@ import os
 import tempfile
 import time
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 
 from src.ai.agent import ChatMessage
 from src.app import OpenHexApp
 from src.main import OpenHexMainWindow
+from src.ui.panels.ai_agent import AIAgentPanel
 
 
 class FakeProvider:
@@ -44,6 +46,17 @@ class FakeProvider:
 
     def cancel(self):
         pass
+
+
+class FakeStatusManager:
+    """Minimal AI manager stub for layout-focused panel tests."""
+
+    def __init__(self, provider_name: str = "MiniMax", model_name: str = "claude-sonnet-4-20250514"):
+        self.current_provider_name = provider_name
+        self.current_model_name = model_name
+
+    def status_text(self):
+        return f"{self.current_provider_name}: {self.current_model_name}"
 
 
 def _wait_until(predicate, timeout_ms: int = 1000):
@@ -102,6 +115,227 @@ def test_ai_agent_panel_updates_running_state_and_messages():
         window.close()
 
 
+def test_ai_agent_panel_compacts_footer_controls_when_visible_sidebar_is_narrow():
+    """Visible narrow panels should shorten footer labels instead of squeezing the send button."""
+    app = OpenHexApp.instance()
+    panel = AIAgentPanel(ai_manager=FakeStatusManager())
+    panel.setFixedWidth(280)
+    panel.resize(280, 480)
+    panel.show()
+    app.processEvents()
+
+    try:
+        assert _wait_until(
+            lambda: panel._send_button.text() == AIAgentPanel.COMPACT_SEND_GLYPH,
+            timeout_ms=300,
+        )
+        assert panel._thinking_button.text() == AIAgentPanel.COMPACT_THINKING_GLYPH
+        assert panel._model_button.text() != "claude-sonnet-4-20250514 v"
+        assert panel._send_button.width() <= AIAgentPanel.COMPACT_SEND_BUTTON_SIZE + 2
+        assert panel._send_button.height() <= AIAgentPanel.COMPACT_SEND_BUTTON_SIZE + 2
+        assert abs(panel._send_button.width() - panel._send_button.height()) <= 2
+
+        panel.setFixedWidth(380)
+        panel.resize(380, 480)
+        app.processEvents()
+
+        assert _wait_until(lambda: panel._send_button.text() == "Send", timeout_ms=300)
+        assert panel._thinking_button.text() == "Deep"
+        assert panel._model_button.text().endswith(" v")
+        assert panel._send_button.width() > AIAgentPanel.COMPACT_SEND_BUTTON_SIZE
+    finally:
+        panel.close()
+
+
+def test_ai_agent_panel_deep_thinking_uses_tooltip_instead_of_status_hint():
+    """Deep-thinking toggles should update the bulb tooltip without surfacing a status banner."""
+    app = OpenHexApp.instance()
+    panel = AIAgentPanel(ai_manager=FakeStatusManager())
+    panel.setFixedWidth(280)
+    panel.resize(280, 480)
+    panel.show()
+    app.processEvents()
+
+    try:
+        assert panel._thinking_button.toolTip() == "Deep thinking: Off"
+
+        panel._set_deep_thinking_enabled(True)
+        app.processEvents()
+
+        assert panel._thinking_button.toolTip() == "Deep thinking: On"
+        assert not panel._status_hint.isVisible()
+        assert panel._status_hint.text() == ""
+    finally:
+        panel.close()
+
+
+def test_ai_agent_panel_uses_styled_hint_bubble_for_composer_icons():
+    """Composer icon hints should use the custom anchored bubble instead of a plain tooltip."""
+    app = OpenHexApp.instance()
+    panel = AIAgentPanel(ai_manager=FakeStatusManager())
+    panel.setFixedWidth(320)
+    panel.resize(320, 480)
+    panel.show()
+    app.processEvents()
+
+    try:
+        panel._show_composer_hint(panel._mention_button)
+        app.processEvents()
+
+        assert panel._hint_bubble is not None
+        assert panel._hint_bubble.isVisible()
+        assert panel._hint_bubble._title_label.text() == "Attach Context"
+        assert "File" in panel._hint_bubble._body_label.text()
+        flags = panel._hint_bubble.windowFlags()
+        assert panel._hint_bubble.windowType() == Qt.WindowType.Tool
+        assert bool(flags & Qt.WindowType.Tool)
+        assert bool(flags & Qt.WindowType.NoDropShadowWindowHint)
+
+        panel._hide_composer_hint()
+        app.processEvents()
+
+        assert not panel._hint_bubble.isVisible()
+    finally:
+        panel.close()
+
+
+def test_ai_agent_panel_opens_custom_model_picker_without_hover_tooltip():
+    """The model button should open the custom picker and avoid a separate hover tooltip."""
+    app = OpenHexApp.instance()
+    panel = AIAgentPanel(ai_manager=FakeStatusManager("Local LLM", "qwen:7b"))
+    panel.setFixedWidth(320)
+    panel.resize(320, 480)
+    panel.show()
+    app.processEvents()
+
+    try:
+        assert panel._model_button.toolTip() == ""
+
+        panel._toggle_model_menu()
+        app.processEvents()
+
+        assert panel._model_menu is not None
+        assert _wait_until(lambda: panel._model_menu.isVisible(), timeout_ms=300)
+        assert panel._model_menu._title_label.text() == "选择模型"
+        assert panel._model_menu.width() <= 272
+        assert panel._model_menu.width() < panel.width() - 24
+        assert panel._model_menu.height() < 340
+        assert len(panel._model_menu._option_rows) >= 1
+        assert panel._model_menu._option_rows[0]._label.text() == "qwen:7b"
+    finally:
+        panel.close()
+
+
+def test_ai_agent_panel_opens_custom_mode_picker_and_applies_selection():
+    """The mode button should reuse the model picker's popup chrome and behavior."""
+    app = OpenHexApp.instance()
+    panel = AIAgentPanel(ai_manager=FakeStatusManager("Local LLM", "qwen:7b"))
+    panel.setFixedWidth(320)
+    panel.resize(320, 480)
+    panel.show()
+    app.processEvents()
+
+    try:
+        assert panel._mode_button.text().startswith("Chat")
+
+        panel._toggle_mode_menu()
+        app.processEvents()
+
+        assert panel._mode_menu is not None
+        assert panel._mode_menu.isVisible()
+        assert panel._mode_menu._title_label.text() == "Mode"
+        assert panel._mode_menu.width() <= 172
+        assert panel._mode_menu.width() < panel.width() - 120
+        assert panel._mode_menu.height() < 340
+        assert len(panel._mode_menu._mode_rows) == 2
+        assert panel._mode_menu._mode_rows[0]._label.text() == "Chat"
+        assert panel._mode_menu._mode_rows[0].height() == 34
+        assert bool(
+            panel._mode_menu._mode_rows[0]._check_label.alignment()
+            & Qt.AlignmentFlag.AlignRight
+        )
+        assert panel._mode_menu._mode_rows[0]._check_label.isVisible()
+        assert not panel._mode_menu._mode_rows[1]._check_label.isVisible()
+
+        QTest.mouseClick(panel._mode_menu._mode_rows[1], Qt.MouseButton.LeftButton)
+        app.processEvents()
+
+        assert panel._interaction_mode == "agent"
+        assert panel._mode_button.text().startswith("Agent")
+        assert not panel._mode_menu.isVisible()
+    finally:
+        panel.close()
+
+
+def test_ai_agent_panel_command_bar_seeds_context_aware_prompts():
+    """The top command bar should fill the composer with the matching quick prompt."""
+    app = OpenHexApp.instance()
+    file_path = _write_temp_file(bytes([0xAA, 0xBB, 0xCC, 0xDD]))
+    window = OpenHexMainWindow()
+    app.processEvents()
+
+    try:
+        editor = window._hex_editor
+        panel = editor._ai_panel_widget
+        editor.open_file(file_path)
+        editor._get_current_hex_view().select_offset_range(0, 2)
+        panel._refresh_context_controls()
+        app.processEvents()
+
+        assert not panel._command_bar.isHidden()
+        assert panel._config_button.text() == "Config v"
+        assert panel._command_buttons["current_file"].isEnabled()
+        assert panel._command_buttons["selection"].isEnabled()
+
+        QTest.mouseClick(panel._command_buttons["selection"], Qt.MouseButton.LeftButton)
+        app.processEvents()
+
+        assert panel._composer.toPlainText() == panel.PROMPT_SUGGESTIONS["Analyze Selection"]
+    finally:
+        window.close()
+        os.unlink(file_path)
+
+
+def test_ai_agent_panel_config_menu_updates_inline_settings_and_opens_dialog():
+    """The command-bar config menu should expose composer settings and the dialog entrypoint."""
+    app = OpenHexApp.instance()
+    panel = AIAgentPanel(ai_manager=FakeStatusManager())
+    panel.show()
+    app.processEvents()
+
+    opened_settings = []
+    panel.open_settings_requested.connect(lambda: opened_settings.append(True))
+
+    try:
+        panel._populate_config_menu()
+        actions = panel._config_menu.actions()
+
+        pin_action = next(action for action in actions if action.text() == "Pin Active File")
+        deep_action = next(action for action in actions if action.text() == "Deep Thinking")
+        settings_action = next(action for action in actions if action.text() == "AI Settings...")
+        steps_action = next(action for action in actions if action.text() == "Max Steps")
+        step_12_action = next(
+            action for action in steps_action.menu().actions() if action.text() == "12 steps"
+        )
+
+        assert pin_action.isChecked()
+        assert not deep_action.isChecked()
+
+        pin_action.trigger()
+        deep_action.trigger()
+        step_12_action.trigger()
+        settings_action.trigger()
+        app.processEvents()
+
+        assert not panel._pin_active_file
+        assert panel._deep_thinking_enabled
+        assert panel._thinking_button.isChecked()
+        assert panel._max_steps == 12
+        assert opened_settings == [True]
+    finally:
+        panel.close()
+
+
 def test_ai_menu_actions_submit_prompt_into_agent_panel():
     """Legacy AI menu actions should focus the agent panel and create a user turn."""
     app = OpenHexApp.instance()
@@ -126,7 +360,7 @@ def test_ai_menu_actions_submit_prompt_into_agent_panel():
         )
         assert _wait_until(lambda: not panel._runner.is_running, timeout_ms=500)
         assert editor.is_ai_panel_visible()
-        assert editor._active_panel_id == "ai"
+        assert not editor._ai_panel_shell.isHidden()
         assert panel.session.messages[0].kind == "user"
         assert "current selection" in panel.session.messages[0].content.lower()
         assert panel.session.messages[-1].kind == "assistant"
@@ -185,7 +419,7 @@ def test_ai_agent_panel_disables_navigation_tools_by_default():
 
 
 def test_ai_agent_panel_inline_model_selector_updates_active_settings():
-    """Selecting a model from the inline dropdown should update the active manager settings."""
+    """Selecting a model from the inline dropdown should update settings silently."""
     app = OpenHexApp.instance()
     window = OpenHexMainWindow()
     app.processEvents()
@@ -215,12 +449,15 @@ def test_ai_agent_panel_inline_model_selector_updates_active_settings():
         }
         editor._ai_manager.configure(app._ai_settings)
         panel.refresh_provider_status()
+        panel._set_status_hint("Using qwen:14b")
 
         panel._select_model("llama3:8b")
 
         assert editor._ai_manager.current_model_name == "llama3:8b"
         assert app._ai_settings["local"]["model"] == "llama3:8b"
         assert panel._model_button.text() == "llama3:8b v"
+        assert not panel._status_hint.isVisible()
+        assert panel._status_hint.text() == ""
     finally:
         window.close()
 

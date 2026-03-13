@@ -4,10 +4,30 @@ Document Model
 Manages multiple open files and their state.
 """
 
+import os
+
 from PyQt6.QtCore import QObject, pyqtSignal
 from typing import Optional, List, Dict, Any
 
 from .file_handle import FileHandle, FileState
+
+
+def _normalize_document_path(path: str | None) -> str:
+    """Return a normalized absolute path for document lookups."""
+    if not path:
+        return ""
+    return os.path.abspath(path)
+
+
+def _paths_match(left: str | None, right: str | None) -> bool:
+    """Check whether two paths refer to the same on-disk file."""
+    if not left or not right:
+        return False
+
+    try:
+        return os.path.samefile(left, right)
+    except (FileNotFoundError, OSError, ValueError):
+        return _normalize_document_path(left) == _normalize_document_path(right)
 
 
 class DocumentModel(QObject):
@@ -72,15 +92,17 @@ class DocumentModel(QObject):
         Returns:
             FileHandle if successful, None otherwise
         """
+        normalized_path = _normalize_document_path(path)
+
         # Check if already open
         for doc in self._documents:
-            if doc.file_path == path:
+            if _paths_match(doc.file_path, normalized_path):
                 self.set_current_document(doc)
                 return doc
 
         # Create new document
         handle = FileHandle()
-        if not handle.load_from_path(path):
+        if not handle.load_from_path(normalized_path):
             return None
 
         # Connect signals
@@ -135,6 +157,8 @@ class DocumentModel(QObject):
         # Adjust current index
         if len(self._documents) == 0:
             self._current_index = -1
+        elif self._current_index > index:
+            self._current_index -= 1
         elif self._current_index >= len(self._documents):
             self._current_index = len(self._documents) - 1
 
@@ -145,6 +169,18 @@ class DocumentModel(QObject):
             self.document_changed.emit(self._documents[self._current_index])
 
         return True
+
+    def close_document_handle(self, document: Optional[FileHandle]) -> bool:
+        """Close the requested document instance if it is still open."""
+        if document is None:
+            return True
+
+        try:
+            index = self._documents.index(document)
+        except ValueError:
+            return True
+
+        return self.close_document(index)
 
     def close_current_document(self) -> bool:
         """Close current document."""
@@ -212,8 +248,9 @@ class DocumentModel(QObject):
         Returns:
             FileHandle or None
         """
+        normalized_path = _normalize_document_path(path)
         for doc in self._documents:
-            if doc.file_path == path:
+            if _paths_match(doc.file_path, normalized_path):
                 return doc
         return None
 

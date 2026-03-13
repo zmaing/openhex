@@ -5,7 +5,7 @@ Main hex view widget with virtual scrolling for efficient large file display.
 """
 
 from PyQt6.QtWidgets import QAbstractItemDelegate, QTableView, QWidget, QVBoxLayout, QHBoxLayout, QStyle, QAbstractItemView, QScrollBar
-from PyQt6.QtCore import Qt, QModelIndex, QRect, pyqtSignal, QSize, QAbstractTableModel, QVariant, QEvent
+from PyQt6.QtCore import Qt, QModelIndex, QRect, QRectF, pyqtSignal, QSize, QAbstractTableModel, QVariant, QEvent
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QTextFormat, QPalette, QPen
 
 # Custom role for search highlight range
@@ -17,6 +17,8 @@ import bisect
 import math
 
 from ...core.filter_engine import CompiledRowFilter, compile_row_filter
+from ..design_system import CHROME, build_mono_font
+from ...utils.i18n import tr
 
 
 class OffsetRulerWidget(QWidget):
@@ -27,15 +29,16 @@ class OffsetRulerWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._font = QFont("Menlo", 9)
-        self._font.setStyleHint(QFont.StyleHint.Monospace)
+        self._font = build_mono_font(8)
         self._bytes_per_row = 16
         self._header_length = 0
         self._scroll_offset = 0
         self._column0_width = 300  # Default, will be updated
         self._tick_interval = 10
-        self.setFixedHeight(26)
-        self.setStyleSheet("background-color: #2d2d2d;")
+        self._hovered = False
+        self.setFixedHeight(CHROME.control_height)
+        self.setMouseTracking(True)
+        self.setToolTip(tr("workspace_ruler_scale"))
 
     def set_bytes_per_row(self, bytes_per_row: int):
         """Set bytes per row."""
@@ -57,6 +60,31 @@ class OffsetRulerWidget(QWidget):
         self._scroll_offset = offset
         self.update()
 
+    def _set_hovered(self, hovered: bool) -> None:
+        """Keep hover-driven caption reveals in sync with pointer state."""
+        hovered = bool(hovered)
+        if self._hovered == hovered:
+            return
+        self._hovered = hovered
+        self.update()
+
+    def enterEvent(self, event):
+        """Reveal secondary captioning when the ruler is inspected directly."""
+        self._set_hovered(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Hide the secondary caption once focus returns to the data region."""
+        self._set_hovered(False)
+        super().leaveEvent(event)
+
+    def _get_model(self):
+        """Return the backing hex-table model when available."""
+        parent = self.parent()
+        if not parent or not hasattr(parent, '_hex_view'):
+            return None
+        return getattr(parent._hex_view, '_model', None)
+
     def _get_visible_major_ticks(self) -> list[tuple[int, float]]:
         """Return visible major tick labels and x positions."""
         return [(byte_offset, x_pos) for byte_offset, x_pos in self._get_visible_byte_ticks() if byte_offset % self._tick_interval == 0]
@@ -76,8 +104,7 @@ class OffsetRulerWidget(QWidget):
         if visible_count <= 0:
             return []
 
-        data_font = QFont("Menlo", 11)
-        data_font.setStyleHint(QFont.StyleHint.Monospace)
+        data_font = build_mono_font(11)
         data_fm = QFontMetrics(data_font)
 
         chars_per_byte = max(1, model.get_chars_per_byte())
@@ -103,36 +130,128 @@ class OffsetRulerWidget(QWidget):
 
         return ticks
 
+    def _get_visible_window_range(self) -> tuple[int, int]:
+        """Return the visible byte window for the current ruler viewport."""
+        model = self._get_model()
+        if model is None:
+            end = max(0, self._bytes_per_row - 1)
+            return 0, end
+
+        start = model.get_horizontal_byte_offset()
+        visible_count = max(1, model.get_visible_byte_count())
+        max_end = max(0, model.get_max_data_bytes_per_row() - 1)
+        end = min(max_end, start + visible_count - 1)
+        return start, end
+
+    def _should_show_scale_caption(self) -> bool:
+        """Show the left caption only on direct inspection and when space allows."""
+        return self._hovered and self.width() >= 320
+
+    def _build_range_overlay_rect(
+        self,
+        text_width: int,
+        outer_margin: int,
+        top_inset: int,
+        label_band_height: int,
+    ) -> QRectF:
+        """Return the footprint used by the floating visible-byte range overlay."""
+        chip_padding_x = 6
+        chip_height = label_band_height + 3
+        chip_width = text_width + chip_padding_x * 2
+        return QRectF(
+            self.width() - chip_width - outer_margin,
+            top_inset - 1,
+            chip_width,
+            chip_height,
+        )
+
     def paintEvent(self, event):
         """Paint the ruler."""
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(self._font)
 
-        bg_color = QColor("#2d2d2d")
-        text_color = QColor("#888888")
-        tick_color = QColor("#555555")
-        baseline_color = QColor("#3c3c3c")
+        outer_margin = 8
+        top_inset = 2
+        label_band_height = 9
+        tick_gutter = 8
+        baseline_y = self.height() - 4
+        major_tick_height = 6
+        minor_tick_height = 3
+        major_label_baseline = 10
 
-        painter.fillRect(self.rect(), bg_color)
+        text_color = QColor(CHROME.text_secondary)
+        minor_tick_color = QColor(CHROME.border_strong)
+        major_tick_color = QColor(CHROME.text_primary)
+        baseline_color = QColor(CHROME.border)
 
-        fm = painter.fontMetrics()
-        bottom = self.height() - 1
-        painter.setPen(baseline_color)
-        painter.drawLine(0, bottom, self.width(), bottom)
+        window_start, window_end = self._get_visible_window_range()
+        info_font = QFont(self._font)
+        info_font.setPointSize(8)
+        info_font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(info_font)
+        info_metrics = QFontMetrics(info_font)
+        left_label = tr("workspace_ruler_scale")
+        right_label = f"{window_start}-{window_end}"
+        left_label_width = info_metrics.horizontalAdvance(left_label)
+        right_label_width = info_metrics.horizontalAdvance(right_label)
+        show_scale_caption = self._should_show_scale_caption()
+        left_label_rect = QRectF(outer_margin, top_inset, left_label_width + 2, label_band_height)
+        right_overlay_rect = self._build_range_overlay_rect(
+            right_label_width,
+            outer_margin,
+            top_inset,
+            label_band_height,
+        )
+        right_label_rect = right_overlay_rect.adjusted(0, 1, 0, -1)
+
+        if show_scale_caption and left_label_rect.adjusted(0, 0, tick_gutter, 0).intersects(right_overlay_rect):
+            show_scale_caption = False
+
+        if show_scale_caption:
+            caption_color = QColor(CHROME.text_muted)
+            caption_color.setAlpha(190)
+            painter.setPen(caption_color)
+            painter.drawText(left_label_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, left_label)
+
+        content_left = outer_margin
+        content_right = self.width() - outer_margin
+        if content_right <= content_left:
+            content_left = outer_margin
+            content_right = self.width() - outer_margin
+        painter.setPen(QPen(baseline_color, 1))
+        painter.drawLine(int(content_left), baseline_y, int(content_right), baseline_y)
 
         for byte_offset, x_pos in self._get_visible_byte_ticks():
-            if -40 < x_pos < self.width() + 40:
-                painter.setPen(tick_color)
-                tick_top = bottom - 8 if byte_offset % self._tick_interval == 0 else bottom - 5
-                painter.drawLine(int(x_pos), tick_top, int(x_pos), bottom)
+            if content_left <= x_pos <= content_right:
+                painter.setPen(major_tick_color if byte_offset % self._tick_interval == 0 else minor_tick_color)
+                tick_top = baseline_y - (major_tick_height if byte_offset % self._tick_interval == 0 else minor_tick_height)
+                painter.drawLine(int(x_pos), tick_top, int(x_pos), baseline_y)
 
+        painter.setFont(self._font)
+        fm = painter.fontMetrics()
         for label_value, x_pos in self._get_visible_major_ticks():
-            if -40 < x_pos < self.width() + 40:
+            if content_left <= x_pos <= content_right:
                 painter.setPen(text_color)
                 label = f"{label_value}"
                 label_width = fm.horizontalAdvance(label)
-                text_x = max(0, min(int(x_pos - label_width / 2), self.width() - label_width))
-                painter.drawText(text_x, 11, label)
+                text_x = max(int(content_left), min(int(x_pos - label_width / 2), int(content_right - label_width)))
+                label_rect = QRectF(text_x, major_label_baseline - fm.ascent(), label_width, fm.height())
+                if label_rect.intersects(right_overlay_rect.adjusted(-2, -1, 2, 1)):
+                    continue
+                painter.drawText(text_x, major_label_baseline, label)
+
+        overlay_text = QColor(CHROME.text_muted)
+        overlay_text.setAlpha(176)
+        overlay_font = QFont(info_font)
+        overlay_font.setWeight(QFont.Weight.Medium)
+        painter.setFont(overlay_font)
+        painter.setPen(overlay_text)
+        painter.drawText(
+            right_label_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            right_label,
+        )
 
 
 class HexTableModel(QAbstractTableModel):
@@ -149,10 +268,10 @@ class HexTableModel(QAbstractTableModel):
     MODE_ASCII = "ascii"
 
     # Highlight color for search results
-    HIGHLIGHT_COLOR = QColor("#515c6a")
-    HIGHLIGHT_CURRENT_COLOR = QColor("#614d00")
+    HIGHLIGHT_COLOR = QColor("#314B70")
+    HIGHLIGHT_CURRENT_COLOR = QColor("#6B5624")
     # Color for modified bytes (red)
-    MODIFIED_COLOR = QColor("#ff6b6b")
+    MODIFIED_COLOR = QColor(CHROME.danger)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -243,7 +362,20 @@ class HexTableModel(QAbstractTableModel):
 
     def set_start_offset(self, offset: int):
         """Set starting offset for display."""
-        self._start_offset = offset
+        offset = max(0, int(offset))
+        if offset != self._start_offset:
+            self.beginResetModel()
+            self._start_offset = offset
+            self._filtered_source_rows = None
+            self._source_to_visible_row = {}
+            self._update_row_count()
+            self.endResetModel()
+
+    def get_start_offset(self) -> int:
+        """Return the effective starting offset used by the current arrangement."""
+        if self._file_size <= 0:
+            return 0
+        return max(0, min(self._start_offset, self._file_size - 1))
 
     def _update_row_count(self):
         """Update row count based on arrangement mode."""
@@ -254,12 +386,14 @@ class HexTableModel(QAbstractTableModel):
             self._max_data_bytes_per_row = self._bytes_per_row
         elif self._arrangement_mode == "equal_frame":
             # 等长帧模式：每行固定字节数
-            self._row_count = (self._file_size + self._bytes_per_row - 1) // self._bytes_per_row
+            start_offset = self.get_start_offset()
+            remaining = max(0, self._file_size - start_offset)
+            self._row_count = (remaining + self._bytes_per_row - 1) // self._bytes_per_row if remaining > 0 else 0
             self._max_data_bytes_per_row = self._bytes_per_row
         elif self._arrangement_mode == "header_length":
             # 头长度模式：需要逐行计算
             count = 0
-            offset = 0
+            offset = self.get_start_offset()
             header_len = self._header_length
             max_rows = 100000  # 防止无限循环
             max_data_len = 0
@@ -279,6 +413,11 @@ class HexTableModel(QAbstractTableModel):
                 count += 1
             self._row_count = count
             self._max_data_bytes_per_row = max_data_len
+
+        self._horizontal_byte_offset = min(
+            self._horizontal_byte_offset,
+            max(0, self._max_data_bytes_per_row - self._visible_byte_count),
+        )
 
     def get_source_row_count(self) -> int:
         """Return the total unfiltered row count."""
@@ -327,7 +466,7 @@ class HexTableModel(QAbstractTableModel):
     def _get_source_row_bounds(self, row: int) -> tuple[int, int, int, int]:
         """Return frame/data bounds for a source row."""
         if self._arrangement_mode == "equal_frame":
-            row_offset = row * self._bytes_per_row
+            row_offset = self._get_source_row_offset(row)
             row_end_offset = min(row_offset + self._bytes_per_row, self._file_size)
         else:
             row_offset = self._get_source_row_offset(row)
@@ -361,15 +500,15 @@ class HexTableModel(QAbstractTableModel):
     def _get_source_row_offset(self, row: int) -> int:
         """Get the file offset for a specific source row in header length mode."""
         if row < 0:
-            return 0
+            return self.get_start_offset()
 
         if self._arrangement_mode == "equal_frame":
-            return row * self._bytes_per_row
+            return self.get_start_offset() + row * self._bytes_per_row
 
         if row < len(self._header_row_offsets):
             return self._header_row_offsets[row]
 
-        offset = 0
+        offset = self.get_start_offset()
         header_len = self._header_length
         max_rows = 100000  # 防止无限循环
 
@@ -497,8 +636,7 @@ class HexTableModel(QAbstractTableModel):
                         # Show empty ASCII area
                         return " " * max(1, self.get_visible_byte_count())
                 elif role == Qt.ItemDataRole.FontRole:
-                    font = QFont("Menlo", 11)
-                    font.setStyleHint(QFont.StyleHint.Monospace)
+                    font = build_mono_font(11)
                     return font
             return None
 
@@ -577,9 +715,9 @@ class HexTableModel(QAbstractTableModel):
             if role == Qt.ItemDataRole.DisplayRole:
                 return self._get_hex_row(row_offset, row_end_offset)
             elif role == Qt.ItemDataRole.BackgroundRole:
-                return QColor("#1e1e1e")
+                return QColor(CHROME.surface)
             elif role == Qt.ItemDataRole.ForegroundRole:
-                return QColor("#d4d4d4")
+                return QColor(CHROME.text_primary)
             elif role == UserRole_HighlightRange:
                 return QVariant(highlight_range)
             elif role == UserRole_SelectionRange:
@@ -590,9 +728,9 @@ class HexTableModel(QAbstractTableModel):
             if role == Qt.ItemDataRole.DisplayRole:
                 return self._get_ascii_row(row_offset, row_end_offset)
             elif role == Qt.ItemDataRole.BackgroundRole:
-                return QColor("#1e1e1e")
+                return QColor(CHROME.surface)
             elif role == Qt.ItemDataRole.ForegroundRole:
-                return QColor("#a9b7c6")
+                return QColor(CHROME.text_secondary)
             elif role == UserRole_HighlightRange:
                 return QVariant(highlight_range)
             elif role == UserRole_SelectionRange:
@@ -756,14 +894,12 @@ class HexViewDelegate(QAbstractItemDelegate):
     """
 
     # Highlight colors
-    HIGHLIGHT_COLOR = QColor("#614d00")
-    CURSOR_COLOR = QColor("#ffffff")
+    HIGHLIGHT_COLOR = QColor("#6B5624")
+    CURSOR_COLOR = QColor(CHROME.text_primary)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._font = QFont("Menlo", 11)
-        if hasattr(self._font, 'setStyleHint'):
-            self._font.setStyleHint(QFont.StyleHint.Monospace)
+        self._font = build_mono_font(11)
 
         # Cursor position for editing
         self._cursor_byte_offset = -1  # Current byte offset, -1 means no cursor
@@ -850,7 +986,7 @@ class HexViewDelegate(QAbstractItemDelegate):
                 start_byte, end_byte = selection_range
                 display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
                 fm = painter.fontMetrics()
-                active_color = QColor("#264f78")
+                active_color = QColor(CHROME.accent)
 
                 # Text has 5px left padding, account for this in highlight
                 text_padding = 5
@@ -878,10 +1014,10 @@ class HexViewDelegate(QAbstractItemDelegate):
                     highlight_rect = QRect(int(byte_x), rect.y(), max(int(byte_width), 1), rect.height())
                     painter.fillRect(highlight_rect, active_color)
 
-                painter.setPen(QColor("#ffffff"))
+                painter.setPen(QColor(CHROME.text_primary))
             elif option.state & QStyle.StateFlag.State_Selected:
-                painter.fillRect(rect, QColor("#264f78"))
-                painter.setPen(QColor("#ffffff"))
+                painter.fillRect(rect, QColor(CHROME.accent))
+                painter.setPen(QColor(CHROME.text_primary))
             else:
                 # Draw background first
                 if bg_color:
@@ -892,7 +1028,7 @@ class HexViewDelegate(QAbstractItemDelegate):
                 # Draw highlight for selected bytes BEFORE drawing text
                 # Priority: selection highlight > search highlight
                 active_range = selection_range if selection_range else highlight_range
-                active_color = QColor("#3a3d41") if selection_range else self.HIGHLIGHT_COLOR
+                active_color = QColor(CHROME.surface_hover) if selection_range else self.HIGHLIGHT_COLOR
 
                 if active_range and not option.state & QStyle.StateFlag.State_Selected:
                     start_byte, end_byte = active_range
@@ -1257,23 +1393,24 @@ class HexView(QTableView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         # Set row height
-        self.verticalHeader().setDefaultSectionSize(18)
+        self.verticalHeader().setDefaultSectionSize(22)
 
         # Style
-        self.setStyleSheet("""
-            QTableView {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
+        self.setStyleSheet(f"""
+            QTableView {{
+                background-color: {CHROME.surface};
+                color: {CHROME.text_primary};
                 border: none;
-            }
-            QTableView::item {
-                padding: 0 5px;
+                gridline-color: transparent;
+            }}
+            QTableView::item {{
+                padding: 1px 6px;
                 background-color: transparent;
-            }
-            QTableView::item:selected {
+            }}
+            QTableView::item:selected {{
                 background-color: transparent;
-                color: #d4d4d4;
-            }
+                color: {CHROME.text_primary};
+            }}
         """)
 
         # Calculate font width for column sizing
@@ -1377,7 +1514,10 @@ class HexView(QTableView):
         offset = max(0, int(offset))
         if self._model._arrangement_mode == "equal_frame":
             bytes_per_row = max(1, self._model._bytes_per_row)
-            return min(row_count - 1, offset // bytes_per_row)
+            start_offset = self._model.get_start_offset()
+            if offset <= start_offset:
+                return 0
+            return min(row_count - 1, (offset - start_offset) // bytes_per_row)
 
         for row in range(row_count):
             _row_start, _row_end, data_start, data_end = self._model._get_source_row_bounds(row)
@@ -1439,10 +1579,20 @@ class HexView(QTableView):
         self._resize_columns()
         self.viewport().update()
 
+    def _get_byte_index_in_row(self, byte_offset: int) -> int:
+        """Return the byte index within its data row for the given absolute offset."""
+        source_row = self._find_source_row_for_offset(byte_offset)
+        if source_row is None:
+            return 0
+
+        _row_start, _row_end, data_start, data_end = self._model._get_source_row_bounds(source_row)
+        if data_end <= data_start:
+            return 0
+        return max(0, min(byte_offset - data_start, data_end - data_start - 1))
+
     def _ensure_cursor_visible(self):
         """Shift the shared horizontal window so the active byte stays visible."""
-        bytes_per_row = max(1, self._model._bytes_per_row)
-        byte_in_row = self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset >= 0 else 0
+        byte_in_row = self._get_byte_index_in_row(self._cursor_byte_offset) if self._cursor_byte_offset >= 0 else 0
         visible_start = self._model.get_horizontal_byte_offset()
         visible_count = self._model.get_visible_byte_count()
 
@@ -1474,8 +1624,7 @@ class HexView(QTableView):
             return False
 
         if pixel_based:
-            font = QFont("Menlo", 11)
-            font.setStyleHint(QFont.StyleHint.Monospace)
+            font = build_mono_font(11)
             char_width = max(1, QFontMetrics(font).horizontalAdvance("0"))
             byte_step = max(1, int(round(abs(horizontal_delta) / char_width)))
         else:
@@ -1626,6 +1775,12 @@ class HexView(QTableView):
             _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(row)
             byte_offset = data_start
 
+        _row_start, _row_end, data_start, data_end = self._model._get_row_bounds(row)
+        if data_end > data_start:
+            byte_offset = min(max(byte_offset, data_start), data_end - 1)
+        else:
+            byte_offset = data_start
+
         self._cursor_byte_offset = max(0, byte_offset)
         self._ensure_cursor_visible()
         
@@ -1714,35 +1869,50 @@ class HexView(QTableView):
 
     def _show_context_menu(self, pos):
         """Show context menu at position."""
-        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QActionGroup
+        from PyQt6.QtWidgets import QLabel, QMenu, QWidgetAction
 
         menu = QMenu(self)
+        menu.setObjectName("hexViewContextMenu")
+        menu.setSeparatorsCollapsible(False)
 
-        # Selection mode submenu
-        selection_menu = QMenu("选择模式", menu)
+        header_action = QWidgetAction(menu)
+        header_widget = QWidget(menu)
+        header_layout = QVBoxLayout(header_widget)
+        header_layout.setContentsMargins(10, 4, 10, 2)
+        header_layout.setSpacing(1)
 
-        # Current mode check
-        row_action = selection_menu.addAction("按行选择")
-        row_action.setCheckable(True)
-        row_action.setChecked(self._selection_mode == self.SELECTION_ROW)
-        row_action.triggered.connect(lambda: self.set_selection_mode(self.SELECTION_ROW))
+        title_label = QLabel("选择模式", header_widget)
+        title_label.setStyleSheet(
+            f"color: {CHROME.text_primary}; font-size: 11px; font-weight: 700;"
+        )
+        subtitle_label = QLabel("切换当前框选与高亮方式", header_widget)
+        subtitle_label.setStyleSheet(
+            f"color: {CHROME.text_muted}; font-size: 10px;"
+        )
+        header_layout.addWidget(title_label)
+        header_layout.addWidget(subtitle_label)
+        header_action.setDefaultWidget(header_widget)
+        menu.addAction(header_action)
+        menu.addSeparator()
 
-        col_action = selection_menu.addAction("按列选择")
-        col_action.setCheckable(True)
-        col_action.setChecked(self._selection_mode == self.SELECTION_COLUMN)
-        col_action.triggered.connect(lambda: self.set_selection_mode(self.SELECTION_COLUMN))
+        action_group = QActionGroup(menu)
+        action_group.setExclusive(True)
 
-        continuous_action = selection_menu.addAction("连续选择")
-        continuous_action.setCheckable(True)
-        continuous_action.setChecked(self._selection_mode == self.SELECTION_CONTINUOUS)
-        continuous_action.triggered.connect(lambda: self.set_selection_mode(self.SELECTION_CONTINUOUS))
-
-        block_action = selection_menu.addAction("块选择")
-        block_action.setCheckable(True)
-        block_action.setChecked(self._selection_mode == self.SELECTION_BLOCK)
-        block_action.triggered.connect(lambda: self.set_selection_mode(self.SELECTION_BLOCK))
-
-        menu.addMenu(selection_menu)
+        mode_specs = [
+            ("按行选择", self.SELECTION_ROW),
+            ("按列选择", self.SELECTION_COLUMN),
+            ("连续选择", self.SELECTION_CONTINUOUS),
+            ("块选择", self.SELECTION_BLOCK),
+        ]
+        for label, mode in mode_specs:
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(self._selection_mode == mode)
+            action.triggered.connect(
+                lambda checked=False, target_mode=mode: self.set_selection_mode(target_mode)
+            )
+            action_group.addAction(action)
 
         menu.exec(self.viewport().mapToGlobal(pos))
 
@@ -1766,8 +1936,7 @@ class HexView(QTableView):
             return 0
 
         rect = self.visualRect(index)
-        font = QFont("Menlo", 11)
-        font.setStyleHint(QFont.StyleHint.Monospace)
+        font = build_mono_font(11)
         fm = QFontMetrics(font)
         display_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
         visible_start = self._model.get_horizontal_byte_offset()
@@ -1802,6 +1971,38 @@ class HexView(QTableView):
         byte_pos = int(x_in_text // max(char_width, 1))
         byte_pos = max(0, min(byte_pos, max(0, visible_count - 1)))
         return visible_start + byte_pos
+
+    def _clear_qt_selection_state(self) -> None:
+        """Clear Qt's item selection so custom byte highlights stay authoritative."""
+        selection_model = self.selectionModel()
+        if selection_model is None:
+            return
+
+        was_blocked = selection_model.signalsBlocked()
+        selection_model.blockSignals(True)
+        selection_model.clearSelection()
+        selection_model.blockSignals(was_blocked)
+
+    def _apply_continuous_selection(self, start_offset: int, end_offset: int) -> None:
+        """Store a continuous byte range and notify observers consistently."""
+        file_size = getattr(self._model, "_file_size", 0)
+        if file_size <= 0:
+            self._model.clear_selection_highlight()
+            self.selection_changed.emit(-1, -1)
+            return
+
+        start_offset = max(0, int(start_offset))
+        end_offset = max(0, int(end_offset))
+        if end_offset < start_offset:
+            start_offset, end_offset = end_offset, start_offset
+
+        file_end = file_size - 1
+        start_offset = min(start_offset, file_end)
+        end_offset = min(end_offset, file_end)
+
+        self._clear_qt_selection_state()
+        self._model.set_selection(start_offset, end_offset)
+        self.selection_changed.emit(start_offset, end_offset)
 
     def _on_selection_changed(self, selected, deselected):
         """Handle selection changed to update highlight based on selection mode."""
@@ -2127,11 +2328,17 @@ class HexView(QTableView):
                 elif self._selection_mode == self.SELECTION_CONTINUOUS:
                     # Track start byte position for continuous selection
                     # Don't call super() - we handle selection ourselves
-                    self.selectionModel().clearSelection()
                     self._block_start_row = index.row()
                     self._block_start_byte_pos = self._calculate_column_byte_pos(index, event.pos().x())
                     self._continuous_current_row = index.row()
                     self._continuous_end_byte_pos = self._block_start_byte_pos
+                    selection_model = self.selectionModel()
+                    if selection_model is not None:
+                        selection_model.blockSignals(True)
+                    self._clear_qt_selection_state()
+                    self.setCurrentIndex(self._model.index(index.row(), index.column()))
+                    if selection_model is not None:
+                        selection_model.blockSignals(False)
                     # Manually set selection range
                     self._update_continuous_selection()
                     # Update delegate cursor after click
@@ -2199,6 +2406,7 @@ class HexView(QTableView):
                         self._continuous_end_byte_pos = new_byte
                         self._update_continuous_selection()
                         # Note: viewport update is handled by set_selection -> dataChanged.emit
+                return
         super().mouseMoveEvent(event)
 
     def _update_continuous_selection(self):
@@ -2240,10 +2448,7 @@ class HexView(QTableView):
             end_offset = end_data_start + end_byte
         
         # Ensure start <= end
-        if end_offset < start_offset:
-            start_offset, end_offset = end_offset, start_offset
-        
-        self._model.set_selection(start_offset, end_offset)
+        self._apply_continuous_selection(start_offset, end_offset)
 
 
     def mouseReleaseEvent(self, event):
@@ -2428,6 +2633,20 @@ class HexView(QTableView):
         self._resize_columns()
         self._apply_row_filters()
 
+    def set_start_offset(self, offset: int):
+        """Set the byte offset used as the display and arrangement start."""
+        self._model.set_start_offset(offset)
+        self._cursor_byte_offset = max(self._model.get_start_offset(), self._cursor_byte_offset)
+        self._resize_columns()
+        self._apply_row_filters()
+        self._ensure_cursor_visible()
+        self._update_delegate_cursor()
+        self.viewport().update()
+
+    def get_start_offset(self) -> int:
+        """Return the effective arrangement start offset for the current view."""
+        return self._model.get_start_offset()
+
     def set_arrangement_mode(self, mode: str, param: int = 32):
         """Set arrangement mode.
 
@@ -2464,8 +2683,7 @@ class HexView(QTableView):
     def _resize_columns(self):
         """Resize columns based on bytes_per_row and actual font metrics."""
         # Use the SAME font as delegate for accurate measurement
-        font = QFont("Menlo", 11)
-        font.setStyleHint(QFont.StyleHint.Monospace)
+        font = build_mono_font(11)
         fm = QFontMetrics(font)
 
         char_width = fm.horizontalAdvance("0")
@@ -2563,7 +2781,9 @@ class HexView(QTableView):
 
         if getattr(model, "_arrangement_mode", "equal_frame") == "equal_frame":
             bytes_per_row = max(1, getattr(model, "_bytes_per_row", 1))
-            source_row = min(model.get_source_row_count() - 1, target_offset // bytes_per_row)
+            start_offset = model.get_start_offset()
+            relative_offset = max(0, target_offset - start_offset)
+            source_row = min(model.get_source_row_count() - 1, relative_offset // bytes_per_row)
             visible_row = model.map_source_row_to_view(source_row)
             if visible_row >= 0:
                 candidate_rows.append(visible_row)
@@ -2683,24 +2903,17 @@ class HexView(QTableView):
         if not index.isValid():
             return
 
-        bytes_per_row = self._model._bytes_per_row
-        header_length = self._model._header_length
-        arrangement_mode = self._model._arrangement_mode
         row = index.row()
+        byte_in_row = self._get_byte_index_in_row(self._cursor_byte_offset)
 
         # Track cursor column from index
         self._cursor_column = index.column()
 
-        if arrangement_mode == "header_length":
-            row_offset = self._model._get_row_offset(row)
-            # For header_length mode, use the stored byte position or 0
-            byte_in_row = self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset > 0 else 0
-            self._cursor_byte_offset = row_offset + header_length + byte_in_row
+        _row_start, _row_end, data_start, data_end = self._model._get_row_bounds(row)
+        if data_end > data_start:
+            self._cursor_byte_offset = min(data_start + byte_in_row, data_end - 1)
         else:
-            # For equal frame mode, calculate from row and preserve byte-in-row position
-            byte_in_row = self._cursor_byte_offset % bytes_per_row if self._cursor_byte_offset > 0 else 0
-            _row_start, _row_end, data_start, _data_end = self._model._get_row_bounds(row)
-            self._cursor_byte_offset = data_start + byte_in_row
+            self._cursor_byte_offset = data_start
 
         # Update delegate cursor and refresh
         self._update_delegate_cursor()
@@ -2864,7 +3077,7 @@ class HexViewWidget(QWidget):
         # Create layout
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(2)
 
         # Create offset ruler (hidden for now)
         self._ruler = OffsetRulerWidget()

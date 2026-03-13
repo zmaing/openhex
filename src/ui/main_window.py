@@ -5,12 +5,12 @@ Main hex editor widget with panels and views.
 """
 
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-                             QTabWidget, QLabel, QProgressBar, QFrame, QToolButton,
-                             QButtonGroup)
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QSettings, QTimer
+                             QTabWidget, QTabBar, QLabel, QProgressBar, QFrame, QToolButton,
+                             QPushButton, QStackedLayout, QSizePolicy, QStyle)
+from PyQt6.QtCore import Qt, QEvent, pyqtSignal, QSize, QSettings, QTimer
 from typing import List
 from pathlib import Path
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPen, QPixmap
 
 import os
 import hashlib
@@ -27,6 +27,7 @@ from ..utils.format import FormatUtils
 from ..utils.i18n import tr
 from ..ai import AIManager
 from .agent_bridge import HexEditorAgentBridge
+from .design_system import CHROME, MONO_FONT_FAMILY, UI_FONT_FAMILY
 from .panels.data_value import DataValuePanel
 from .panels.structure_view import StructureViewPanel
 from .panels.ai_agent import AIAgentPanel
@@ -56,22 +57,76 @@ class HexEditorMainWindow(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("hexEditorWorkspace")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            QWidget#hexEditorWorkspace {{
+                background-color: {CHROME.workspace_bg};
+                border-radius: 14px;
+            }}
+            QWidget#editorCenterColumn,
+            QWidget#editorAIPanelShell,
+            QWidget#rightPanelShell {{
+                background-color: {CHROME.surface};
+                border: 1px solid {CHROME.border};
+                border-radius: 14px;
+            }}
+            QFrame#editorEmptyStateCard {{
+                background-color: {CHROME.surface_alt};
+                border: 1px solid {CHROME.border};
+                border-radius: 12px;
+            }}
+            QLabel#editorEmptyStateTitle {{
+                color: {CHROME.text_primary};
+                font-size: 18px;
+                font-weight: 700;
+            }}
+            QLabel#editorEmptyStateBody {{
+                color: {CHROME.text_secondary};
+                font-size: 12px;
+            }}
+            QLabel#editorEmptyStateMeta {{
+                color: {CHROME.text_muted};
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QPushButton#editorEmptyStatePrimary {{
+                background-color: {CHROME.accent_surface};
+                border: 1px solid {CHROME.accent_surface_strong};
+                border-radius: 10px;
+                padding: 6px 14px;
+                min-height: 30px;
+                font-weight: 700;
+            }}
+            QPushButton#editorEmptyStatePrimary:hover {{
+                background-color: {CHROME.accent_surface_strong};
+            }}
+            QPushButton#editorEmptyStateSecondary {{
+                background-color: {CHROME.surface};
+                border: 1px solid {CHROME.border};
+                border-radius: 10px;
+                padding: 6px 14px;
+                min-height: 30px;
+            }}
+        """)
         self._document_model = DocumentModel()
         self._data_model = DataModel()
         self._ascii_visible = True
         self._undo_stack = UndoStack()
         self._splitter = None
-        self._file_tree_width = 250
-        self._right_panel_width = 280
-        self._right_panel_standard_width = 280
-        self._right_panel_horizontal_width = 520
+        self._file_tree_width = CHROME.sidebar_width
+        self._ai_panel_width = max(280, CHROME.right_panel_width)
+        self._right_panel_width = CHROME.right_panel_width
+        self._right_panel_standard_width = CHROME.right_panel_width
+        self._right_panel_horizontal_width = CHROME.right_panel_horizontal_width
         self._panel_visibility = {
             "value": True,
             "ai": True,
             "structure": False,
         }
-        self._panel_layout_mode = "tabs"
-        self._active_panel_id = "value"
+        self._panel_layout_mode = "horizontal"
+        self._active_panel_id = "data"
+        self._resolved_side_panel_signature = None
 
         # AI Manager
         self._ai_manager = AIManager(self)
@@ -135,6 +190,8 @@ class HexEditorMainWindow(QWidget):
         if app is not None:
             app._ai_settings = settings
         self._ai_manager.configure(settings)
+        if not settings.get("enabled", True) and self._panel_visibility.get("ai", False):
+            self.set_ai_panel_visible(False)
         if hasattr(self, "_ai_panel_widget"):
             self._ai_panel_widget.refresh_provider_status()
 
@@ -142,15 +199,20 @@ class HexEditorMainWindow(QWidget):
         """Restore side panel visibility and layout settings."""
         s = self._get_settings()
         self._panel_visibility["value"] = s.value("side_panel/value_visible", True, type=bool)
-        self._panel_visibility["ai"] = s.value("side_panel/ai_visible", True, type=bool)
+        self._panel_visibility["ai"] = s.value("side_panel/ai_visible", False, type=bool)
         self._panel_visibility["structure"] = s.value("side_panel/structure_visible", False, type=bool)
-        layout_mode = s.value("side_panel/layout_mode", "tabs", type=str)
-        if layout_mode == "split":
-            layout_mode = "vertical"
-        self._panel_layout_mode = layout_mode if layout_mode in {"tabs", "vertical", "horizontal"} else "tabs"
-        active_panel_id = s.value("side_panel/active_panel", "value", type=str)
-        self._active_panel_id = active_panel_id if active_panel_id in self._panel_visibility else "value"
+        self._panel_layout_mode = "horizontal"
+
+        saved_active_panel_id = s.value("side_panel/active_panel", "value", type=str)
+        self._active_panel_id = {
+            "value": "data",
+            "data": "data",
+            "structure": "structure",
+            "info": "data",
+            "ai": "data",
+        }.get(saved_active_panel_id, "data")
         self._refresh_side_panel_layout()
+        self._sync_ai_panel_visibility()
         self._sync_right_panel_visibility()
         self._apply_right_panel_width_for_layout()
         self._schedule_right_panel_width_restore()
@@ -235,55 +297,117 @@ class HexEditorMainWindow(QWidget):
         """Initialize UI components."""
         # Main layout
         main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
 
         # Create splitter for resizable panels
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setObjectName("editorWorkspaceSplitter")
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.setHandleWidth(6)
+        self._splitter.setStyleSheet(f"""
+            QSplitter {{
+                background: transparent;
+            }}
+            QSplitter::handle {{
+                background: transparent;
+                margin: 6px 1px;
+                border-radius: 3px;
+            }}
+            QSplitter::handle:hover {{
+                background: {CHROME.border};
+            }}
+        """)
 
         # Left panel - File browser
         from .panels.file_browser import FileBrowser
         self._file_browser = FileBrowser()
+        self._file_browser.setMinimumWidth(220)
         self._file_browser.file_double_clicked.connect(self._on_file_open_request)
         self._splitter.addWidget(self._file_browser)
 
         # Center widget - Main editor area
         center_widget = QWidget()
+        center_widget.setObjectName("editorCenterColumn")
+        center_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         center_layout = QVBoxLayout()
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(0)
+        center_layout.setContentsMargins(8, 8, 8, 8)
+        center_layout.setSpacing(6)
 
         # Tab widget for multiple files
         self._tab_widget = QTabWidget()
-        self._tab_widget.setTabsClosable(True)
-        self._tab_widget.tabCloseRequested.connect(self._on_close_tab)
+        self._tab_widget.setObjectName("editorTabWidget")
+        self._tab_widget.setDocumentMode(True)
+        self._tab_widget.tabBar().setDrawBase(False)
+        self._tab_widget.tabBar().setExpanding(False)
+        self._tab_widget.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
+        self._tab_widget.setTabsClosable(False)
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
 
         # Style
-        self._tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                background-color: #1e1e1e;
-                border: none;
-            }
-            QTabBar::tab {
-                background-color: #2d2d2d;
-                color: #cccccc;
-                padding: 6px 12px;
-                border: none;
-            }
-            QTabBar::tab:selected {
-                background-color: #1e1e1e;
-                color: #ffffff;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #3c3c3c;
-            }
-            QTabWidget::tab-bar {
+        self._tab_widget.setStyleSheet(f"""
+            QTabWidget::pane {{
+                background-color: {CHROME.surface_alt};
+                border: 1px solid {CHROME.border};
+                border-radius: 10px;
+                margin-top: 4px;
+            }}
+            QTabBar::tab {{
+                background-color: {CHROME.surface};
+                color: {CHROME.text_muted};
+                padding: 3px 8px;
+                margin-right: 3px;
+                margin-bottom: 1px;
+                border: 1px solid {CHROME.border};
+                border-radius: 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {CHROME.surface_alt};
+                color: {CHROME.text_primary};
+                border-color: {CHROME.border_strong};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {CHROME.surface_hover};
+                color: {CHROME.text_primary};
+            }}
+            QToolButton#editorTabCloseButton {{
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                min-width: 14px;
+                max-width: 14px;
+                min-height: 14px;
+                max-height: 14px;
+                padding: 0;
+                margin-left: 3px;
+            }}
+            QToolButton#editorTabCloseButton:hover {{
+                background-color: {CHROME.surface_raised};
+                border-color: {CHROME.border_strong};
+            }}
+            QToolButton#editorTabCloseButton:pressed {{
+                background-color: {CHROME.surface_hover};
+                border-color: {CHROME.accent_surface_strong};
+            }}
+            QTabWidget::tab-bar {{
                 alignment: left;
-            }
+                left: 1px;
+            }}
         """)
 
-        center_layout.addWidget(self._tab_widget)
+        self._center_stack_host = QWidget()
+        self._center_stack_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._center_stack = QStackedLayout()
+        self._center_stack.setContentsMargins(0, 0, 0, 0)
+        self._center_stack.setStackingMode(QStackedLayout.StackingMode.StackOne)
+        self._center_empty_state = self._create_center_empty_state()
+        self._center_stack.addWidget(self._center_empty_state)
+        self._center_stack.addWidget(self._tab_widget)
+        self._center_stack_host.setLayout(self._center_stack)
+
+        center_layout.addWidget(self._center_stack_host, 1)
 
         # Status bar
         self._status_bar = self._create_status_bar()
@@ -292,172 +416,844 @@ class HexEditorMainWindow(QWidget):
         center_widget.setLayout(center_layout)
         self._splitter.addWidget(center_widget)
 
+        self._ai_panel = self._create_ai_panel()
+        self._ai_panel_shell = self._create_ai_workspace_panel()
+        self._splitter.addWidget(self._ai_panel_shell)
+
         # Right panel - Info panels
         self._right_panel = self._create_right_panel()
         self._splitter.addWidget(self._right_panel)
 
         # Set initial sizes
-        self._splitter.setSizes([self._file_tree_width, 700, self._right_panel_width])
+        self._splitter.setSizes([self._file_tree_width, 780, self._ai_panel_width, self._right_panel_width])
 
         main_layout.addWidget(self._splitter)
         self.setLayout(main_layout)
+        self._update_center_empty_state()
 
     def _create_status_bar(self):
         """Create status bar."""
         bar = QFrame()
-        bar.setStyleSheet("""
-            QFrame {
-                background-color: #252526;
-                color: #cccccc;
-                border-top: 1px solid #3c3c3c;
-            }
-        """)
-        bar.setFixedHeight(24)
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(8, 2, 8, 2)
-        layout.setSpacing(16)
-
-        # Label style without border/frame
-        label_style = "QLabel { border: none; }"
-
-        # Message label (for status messages)
-        self._msg_label = QLabel("")
-        self._msg_label.setStyleSheet("color: #4ec9b0; border: none;")
-        layout.addWidget(self._msg_label)
-
-        # Position label
-        self._pos_label = QLabel("Offset: 0x00000000")
-        self._pos_label.setStyleSheet(label_style)
-        layout.addWidget(self._pos_label)
-
-        # Selection label
-        self._selection_label = QLabel("Sel: 0 bytes")
-        self._selection_label.setStyleSheet(label_style)
-        layout.addWidget(self._selection_label)
-
-        # Arrangement mode label (shows bytes per row)
-        self._arrangement_label = QLabel("等长帧: 32")
-        self._arrangement_label.setStyleSheet(label_style)
-        layout.addWidget(self._arrangement_label)
-
-        # Encoding label
-        self._encoding_label = QLabel("UTF-8")
-        self._encoding_label.setStyleSheet(label_style)
-        layout.addWidget(self._encoding_label)
-
-        # File size label
-        self._size_label = QLabel("Size: 0 B")
-        self._size_label.setStyleSheet(label_style)
-        layout.addWidget(self._size_label)
-
-        # Progress indicator
-        self._progress = QProgressBar()
-        self._progress.setMaximumWidth(100)
-        self._progress.setVisible(False)
-        self._progress.setStyleSheet("""
-            QProgressBar {
-                background-color: #3c3c3c;
+        bar.setObjectName("workspaceStatusBar")
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar.setStyleSheet(f"""
+            QFrame#workspaceStatusBar {{
+                background: transparent;
                 border: none;
-                height: 14px;
-            }
-            QProgressBar::chunk {
-                background-color: #0e639c;
-            }
+            }}
+            QFrame#workspaceStatusRail {{
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 1,
+                    stop: 0 {CHROME.surface_alt},
+                    stop: 1 {CHROME.surface}
+                );
+                border: 1px solid {CHROME.border_strong};
+                border-radius: 12px;
+            }}
+            QFrame#statusDocumentGroup,
+            QFrame#statusMetricGroup,
+            QFrame#statusModeGroup {{
+                background: transparent;
+                border: none;
+                border-radius: 0;
+                min-height: 30px;
+                max-height: 30px;
+            }}
+            QFrame#statusDocumentAccent {{
+                min-width: 4px;
+                max-width: 4px;
+                min-height: 16px;
+                max-height: 16px;
+                border-radius: 2px;
+                background-color: {CHROME.success};
+            }}
+            QFrame#statusDocumentAccent[stateTone="saved"] {{
+                background-color: {CHROME.success};
+            }}
+            QFrame#statusDocumentAccent[stateTone="modified"] {{
+                background-color: {CHROME.danger};
+            }}
+            QFrame#statusDocumentAccent[stateTone="draft"] {{
+                background-color: {CHROME.warning};
+            }}
+            QFrame#statusClusterDivider {{
+                background-color: {CHROME.border};
+                min-width: 1px;
+                max-width: 1px;
+                min-height: 12px;
+                margin: 6px 2px;
+            }}
+            QFrame#statusDocumentStateDot {{
+                min-width: 8px;
+                max-width: 8px;
+                min-height: 8px;
+                max-height: 8px;
+                border-radius: 4px;
+                background-color: {CHROME.success};
+            }}
+            QFrame#statusDocumentStateDot[stateTone="saved"] {{
+                background-color: {CHROME.success};
+            }}
+            QFrame#statusDocumentStateDot[stateTone="modified"] {{
+                background-color: {CHROME.danger};
+            }}
+            QFrame#statusDocumentStateDot[stateTone="draft"] {{
+                background-color: {CHROME.warning};
+            }}
+            QFrame#statusField {{
+                background: transparent;
+                border: none;
+            }}
+            QLabel#statusMessageChip {{
+                background-color: {CHROME.accent_surface};
+                color: {CHROME.text_primary};
+                border: 1px solid {CHROME.accent_surface_strong};
+                border-radius: 9px;
+                min-height: 28px;
+                max-height: 28px;
+                padding: 0 10px;
+                font-size: 10px;
+                font-weight: 700;
+                font-family: {UI_FONT_FAMILY};
+            }}
+            QLabel#statusDocumentName {{
+                color: {CHROME.text_primary};
+                background: transparent;
+                border: none;
+                font-size: 11px;
+                font-weight: 700;
+                font-family: {UI_FONT_FAMILY};
+            }}
+            QLabel#statusDocumentMeta {{
+                color: {CHROME.text_muted};
+                background: transparent;
+                border: none;
+                font-size: 9px;
+                font-weight: 500;
+                font-family: {UI_FONT_FAMILY};
+            }}
+            QLabel#statusDocumentTypeChip,
+            QLabel#statusDocumentStateChip {{
+                min-height: 20px;
+                max-height: 20px;
+                padding: 0 2px;
+                border: none;
+                background: transparent;
+                font-size: 10px;
+                font-weight: 700;
+                font-family: {UI_FONT_FAMILY};
+            }}
+            QLabel#statusDocumentTypeChip {{
+                color: {CHROME.text_secondary};
+            }}
+            QLabel#statusDocumentStateChip[stateTone="saved"] {{
+                color: {CHROME.success};
+            }}
+            QLabel#statusDocumentStateChip[stateTone="modified"] {{
+                color: {CHROME.danger};
+            }}
+            QLabel#statusDocumentStateChip[stateTone="draft"] {{
+                color: {CHROME.warning};
+            }}
+            QLabel#statusFieldCaption {{
+                color: {CHROME.text_muted};
+                background: transparent;
+                border: none;
+                font-size: 8px;
+                font-weight: 700;
+                font-family: {UI_FONT_FAMILY};
+            }}
+            QLabel#statusFieldValue {{
+                color: {CHROME.text_secondary};
+                background: transparent;
+                border: none;
+                font-size: 10px;
+                font-weight: 600;
+                font-family: {MONO_FONT_FAMILY};
+            }}
+            QLabel#statusFieldValueStrong {{
+                color: {CHROME.text_primary};
+                background: transparent;
+                border: none;
+                font-size: 10px;
+                font-weight: 700;
+                font-family: {MONO_FONT_FAMILY};
+            }}
+            QProgressBar#statusProgressBar {{
+                background-color: {CHROME.surface_raised};
+                border: 1px solid {CHROME.border_strong};
+                border-radius: 7px;
+                min-height: 20px;
+                max-height: 20px;
+                padding: 1px;
+                color: {CHROME.text_secondary};
+                text-align: center;
+            }}
+            QProgressBar#statusProgressBar::chunk {{
+                background-color: {CHROME.accent_surface_strong};
+                border-radius: 6px;
+                margin: 2px;
+            }}
         """)
-        layout.addWidget(self._progress)
+        bar.setFixedHeight(max(CHROME.status_bar_height, 34))
 
-        layout.addStretch()
+        root_layout = QHBoxLayout(bar)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        # Mode label
-        self._mode_label = QLabel("Hex")
-        self._mode_label.setStyleSheet(label_style)
-        layout.addWidget(self._mode_label)
+        rail = QFrame()
+        rail.setObjectName("workspaceStatusRail")
+        rail.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        rail_layout = QHBoxLayout(rail)
+        rail_layout.setContentsMargins(6, 3, 6, 3)
+        rail_layout.setSpacing(6)
 
-        # Edit mode label (OVR/INS)
-        self._edit_mode_label = QLabel("OVR")
-        self._edit_mode_label.setStyleSheet("color: #569cd6; font-weight: bold; border: none;")
-        layout.addWidget(self._edit_mode_label)
+        self._document_status_group = self._create_document_status_group()
+        rail_layout.addWidget(self._document_status_group, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._document_metric_divider = self._create_status_divider_widget("statusRailSectionDivider")
+        rail_layout.addWidget(self._document_metric_divider, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        bar.setLayout(layout)
+        metric_group, metric_layout = self._create_status_cluster("statusMetricGroup")
+        self._offset_field, self._pos_label = self._create_status_field(tr("status_caption_offset"), "0x00000000")
+        metric_layout.addWidget(self._offset_field)
+        self._metric_offset_selection_divider = self._create_status_divider_widget()
+        metric_layout.addWidget(self._metric_offset_selection_divider)
+
+        self._selection_field, self._selection_label = self._create_status_field(tr("status_caption_selection"), "0 B")
+        metric_layout.addWidget(self._selection_field)
+        self._metric_selection_arrangement_divider = self._create_status_divider_widget()
+        metric_layout.addWidget(self._metric_selection_arrangement_divider)
+
+        self._arrangement_field, self._arrangement_label = self._create_status_field(
+            tr("status_caption_layout"),
+            self._format_arrangement_status("equal_frame", self._data_model.bytes_per_frame),
+        )
+        metric_layout.addWidget(self._arrangement_field)
+        self._metric_arrangement_encoding_divider = self._create_status_divider_widget()
+        metric_layout.addWidget(self._metric_arrangement_encoding_divider)
+
+        self._encoding_field, self._encoding_label = self._create_status_field(tr("status_caption_encoding"), "UTF-8")
+        metric_layout.addWidget(self._encoding_field)
+        self._metric_encoding_size_divider = self._create_status_divider_widget()
+        metric_layout.addWidget(self._metric_encoding_size_divider)
+
+        self._size_field, self._size_label = self._create_status_field(tr("status_caption_size"), "0 B")
+        metric_layout.addWidget(self._size_field)
+        rail_layout.addWidget(metric_group, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._msg_label = QLabel("")
+        self._msg_label.setObjectName("statusMessageChip")
+        self._msg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._msg_label.setVisible(False)
+        rail_layout.addWidget(self._msg_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._progress = QProgressBar()
+        self._progress.setObjectName("statusProgressBar")
+        self._progress.setFixedWidth(88)
+        self._progress.setVisible(False)
+        rail_layout.addWidget(self._progress, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        mode_group, mode_layout = self._create_status_cluster("statusModeGroup")
+        self._view_mode_field, self._mode_label = self._create_status_field(
+            tr("status_caption_view"),
+            "Hex",
+            value_object_name="statusFieldValueStrong",
+        )
+        mode_layout.addWidget(self._view_mode_field)
+        self._mode_group_divider = self._create_status_divider_widget()
+        mode_layout.addWidget(self._mode_group_divider)
+
+        self._edit_mode_field, self._edit_mode_label = self._create_status_field(
+            tr("status_caption_edit"),
+            "OVR",
+            value_object_name="statusFieldValueStrong",
+        )
+        mode_layout.addWidget(self._edit_mode_field)
+        self._metric_mode_divider = self._create_status_divider_widget("statusRailSectionDivider")
+        rail_layout.addWidget(self._metric_mode_divider, 0, Qt.AlignmentFlag.AlignVCenter)
+        rail_layout.addWidget(mode_group, 0, Qt.AlignmentFlag.AlignVCenter)
+        rail_layout.addStretch(1)
+
+        root_layout.addWidget(rail)
 
         # Add showMessage method
-        bar.showMessage = lambda msg, timeout=3000: self._show_status_message(msg)
+        bar.showMessage = lambda msg, timeout=3000: self._show_status_message(msg, timeout)
+        self._apply_balanced_status_bar_visibility()
+        self._stabilize_status_bar_widths()
 
         return bar
 
-    def _show_status_message(self, message: str):
+    def _create_document_status_group(self) -> QFrame:
+        """Create the document summary block embedded in the workspace status bar."""
+        group = QFrame()
+        group.setObjectName("statusDocumentGroup")
+        group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        group.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(group)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+
+        self._document_status_accent = QFrame()
+        self._document_status_accent.setObjectName("statusDocumentAccent")
+        self._document_status_accent.setProperty("stateTone", "saved")
+        layout.addWidget(self._document_status_accent, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._document_status_state_dot = QFrame()
+        self._document_status_state_dot.setObjectName("statusDocumentStateDot")
+        self._document_status_state_dot.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._document_status_state_dot.setProperty("stateTone", "saved")
+        self._document_status_state_dot.setToolTip(tr("status_saved"))
+        layout.addWidget(self._document_status_state_dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._document_status_name = QLabel("Untitled")
+        self._document_status_name.setObjectName("statusDocumentName")
+        self._document_status_name.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        layout.addWidget(self._document_status_name, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._document_status_meta = QLabel("")
+        self._document_status_meta.setObjectName("statusDocumentMeta")
+        self._document_status_meta.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._document_status_meta.setMinimumWidth(0)
+        layout.addWidget(self._document_status_meta, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        self._document_status_chip_divider = self._create_status_divider_widget()
+        layout.addWidget(self._document_status_chip_divider, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._document_status_kind_chip = QLabel("BIN")
+        self._document_status_kind_chip.setObjectName("statusDocumentTypeChip")
+        layout.addWidget(self._document_status_kind_chip, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._document_status_state_divider = self._create_status_divider_widget()
+        layout.addWidget(self._document_status_state_divider, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._document_status_state_chip = QLabel(tr("status_saved"))
+        self._document_status_state_chip.setObjectName("statusDocumentStateChip")
+        self._document_status_state_chip.setProperty("stateTone", "saved")
+        layout.addWidget(self._document_status_state_chip, 0, Qt.AlignmentFlag.AlignVCenter)
+        return group
+
+    def _create_status_cluster(self, object_name: str) -> tuple[QFrame, QHBoxLayout]:
+        """Create a shared capsule group for compact footer chrome."""
+        group = QFrame()
+        group.setObjectName(object_name)
+        group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QHBoxLayout(group)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(0)
+        return group, layout
+
+    def _add_status_cluster_divider(self, layout: QHBoxLayout, object_name: str = "statusClusterDivider") -> None:
+        """Insert a subtle divider inside a footer capsule group."""
+        layout.addWidget(self._create_status_divider_widget(object_name))
+
+    def _create_status_divider_widget(self, object_name: str = "statusClusterDivider") -> QFrame:
+        """Create a subtle vertical divider shared by footer groups."""
+        divider = QFrame()
+        divider.setObjectName(object_name)
+        divider.setFrameShape(QFrame.Shape.VLine)
+        return divider
+
+    def _create_status_field(
+        self,
+        caption: str,
+        value: str,
+        value_object_name: str = "statusFieldValue",
+    ) -> tuple[QFrame, QLabel]:
+        """Create a compact key-value field for the workspace status rail."""
+        field = QFrame()
+        field.setObjectName("statusField")
+
+        layout = QHBoxLayout(field)
+        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setSpacing(5)
+
+        caption_label = QLabel(caption)
+        caption_label.setObjectName("statusFieldCaption")
+        layout.addWidget(caption_label)
+
+        value_label = QLabel(value)
+        value_label.setObjectName(value_object_name)
+        layout.addWidget(value_label)
+
+        return field, value_label
+
+    def _apply_balanced_status_bar_visibility(self) -> None:
+        """Hide secondary footer details so the lower rail stays readable on narrower windows."""
+        for widget in (
+            self._document_status_accent,
+            self._document_status_meta,
+            self._document_status_chip_divider,
+            self._document_status_kind_chip,
+            self._document_status_state_divider,
+            self._document_status_state_chip,
+            self._document_metric_divider,
+            self._metric_offset_selection_divider,
+            self._metric_selection_arrangement_divider,
+            self._arrangement_field,
+            self._metric_arrangement_encoding_divider,
+            self._encoding_field,
+            self._metric_encoding_size_divider,
+            self._metric_mode_divider,
+            self._mode_group_divider,
+        ):
+            widget.hide()
+
+    def _stabilize_status_bar_widths(self) -> None:
+        """Reserve stable widths for dynamic footer tokens so saving does not resize the window."""
+        self._document_status_kind_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._document_status_state_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._msg_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        kind_width = max(
+            52,
+            self._status_label_width(
+                self._document_status_kind_chip,
+                ["BIN", "DAT", "JSON", "ASCII", "MARKDOWN", "PCAPNG"],
+                padding=16,
+            ),
+        )
+        state_width = max(
+            72,
+            self._status_label_width(
+                self._document_status_state_chip,
+                [
+                    tr("status_saved"),
+                    tr("workspace_state_draft"),
+                    tr("workspace_state_modified"),
+                ],
+                padding=22,
+            ),
+        )
+        name_width = max(
+            112,
+            self._status_label_width(
+                self._document_status_name,
+                [
+                    self._compact_status_text("requirements.txt", max_chars=18),
+                    self._compact_status_text(
+                        "very_long_filename_placeholder.bin",
+                        max_chars=18,
+                    ),
+                ],
+                padding=10,
+            ),
+        )
+        message_width = max(
+            96,
+            self._status_label_width(
+                self._msg_label,
+                [
+                    tr("status_saved"),
+                    "Save failed",
+                    "No file open",
+                    "No file to save",
+                    tr("filter_status_cleared"),
+                ],
+                padding=20,
+            ),
+        )
+
+        self._document_status_name.setFixedWidth(name_width)
+        self._document_status_kind_chip.setFixedWidth(kind_width)
+        self._document_status_state_chip.setFixedWidth(state_width)
+        self._msg_label.setFixedWidth(message_width)
+        self._msg_label.setFixedHeight(28)
+
+    def _status_label_width(self, label: QLabel, texts: list[str], padding: int = 16) -> int:
+        """Estimate a fixed label width for a set of short state strings."""
+        metrics = QFontMetrics(label.font())
+        return max(metrics.horizontalAdvance(text) for text in texts) + padding
+
+    def _format_arrangement_status(self, mode: str, value: int) -> str:
+        """Return a compact arrangement summary for the workspace status rail."""
+        if mode == "header_length":
+            return tr("status_arrangement_header", value)
+        if mode == "custom":
+            return tr("status_arrangement_custom", value)
+        return tr("status_arrangement_equal", value)
+
+    def _create_center_empty_state(self):
+        """Create the empty-state canvas shown before any file is open."""
+        card = QFrame()
+        card.setObjectName("editorEmptyStateCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+        layout.addStretch()
+
+        content = QWidget(card)
+        content.setFixedWidth(560)
+        content.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Maximum)
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(12)
+
+        title = QLabel("Open a binary workspace")
+        title.setObjectName("editorEmptyStateTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        content_layout.addWidget(title)
+
+        body = QLabel(
+            "先打开文件或文件夹，再从右侧智能面板进入分析和后续编辑流程。"
+        )
+        body.setObjectName("editorEmptyStateBody")
+        body.setWordWrap(True)
+        body.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        content_layout.addWidget(body)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 6, 0, 6)
+        actions.setSpacing(10)
+        actions.addStretch()
+
+        open_file_btn = QPushButton("Open File")
+        open_file_btn.setObjectName("editorEmptyStatePrimary")
+        open_file_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_file_btn.clicked.connect(lambda checked=False: self.open_file())
+        actions.addWidget(open_file_btn)
+
+        open_folder_btn = QPushButton("Open Folder")
+        open_folder_btn.setObjectName("editorEmptyStateSecondary")
+        open_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_folder_btn.clicked.connect(lambda checked=False: self.open_folder())
+        actions.addWidget(open_folder_btn)
+
+        actions.addStretch()
+        content_layout.addLayout(actions)
+
+        meta = QLabel("Tips: Cmd/Ctrl+O 打开文件，Explorer 浏览目录，AI 面板会自动读取当前上下文。")
+        meta.setObjectName("editorEmptyStateMeta")
+        meta.setWordWrap(True)
+        meta.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        meta.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        content_layout.addWidget(meta)
+
+        content.setLayout(content_layout)
+        layout.addWidget(content, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch()
+
+        card.setLayout(layout)
+        return card
+
+    def _update_center_empty_state(self):
+        """Show the empty-state canvas when no editor tabs are open."""
+        if hasattr(self, "_center_stack"):
+            has_tabs = self._tab_widget.count() > 0
+            self._center_stack.setCurrentIndex(0 if not has_tabs else 1)
+            self._update_document_status_summary(self._document_model.current_document if has_tabs else None)
+
+    def _update_document_status_summary(self, doc: FileHandle | None):
+        """Refresh the document summary embedded in the workspace status bar."""
+        if not hasattr(self, "_document_status_group"):
+            return
+
+        if not doc:
+            empty_name = "Untitled"
+            empty_meta = tr("workspace_unsaved")
+            self._document_status_name.setText(self._compact_status_text(empty_name, max_chars=16))
+            self._document_status_name.setToolTip(empty_name)
+            self._document_status_meta.setText(self._compact_status_text(empty_meta, max_chars=18))
+            self._document_status_meta.setToolTip(empty_meta)
+            self._document_status_kind_chip.setText("BIN")
+            state_text = tr("workspace_state_draft")
+            self._document_status_state_chip.setText(state_text)
+            self._document_status_state_chip.setProperty("stateTone", "draft")
+            self._document_status_accent.setProperty("stateTone", "draft")
+            self._document_status_state_dot.setProperty("stateTone", "draft")
+            self._document_status_state_dot.setToolTip(state_text)
+            self._repolish_widget(self._document_status_state_chip)
+            self._repolish_widget(self._document_status_accent)
+            self._repolish_widget(self._document_status_state_dot)
+            return
+
+        self._document_status_name.setText(self._compact_status_text(doc.file_name, max_chars=18))
+        self._document_status_name.setToolTip(doc.file_name)
+
+        if doc.file_path:
+            parent_path = str(Path(doc.file_path).parent)
+            self._document_status_meta.setText(self._compact_status_text(parent_path, max_chars=20))
+            self._document_status_meta.setToolTip(doc.file_path)
+        else:
+            draft_text = tr("workspace_unsaved")
+            self._document_status_meta.setText(self._compact_status_text(draft_text, max_chars=18))
+            self._document_status_meta.setToolTip(draft_text)
+
+        suffix = Path(doc.file_name).suffix.upper().lstrip(".") or "BIN"
+        self._document_status_kind_chip.setText(suffix[:10])
+
+        if doc.file_state == FileState.MODIFIED:
+            state_text = tr("workspace_state_modified")
+            tone = "modified"
+        elif doc.file_state == FileState.NEW:
+            state_text = tr("workspace_state_draft")
+            tone = "draft"
+        else:
+            state_text = tr("status_saved")
+            tone = "saved"
+        self._document_status_state_chip.setText(state_text)
+        self._document_status_state_chip.setProperty("stateTone", tone)
+        self._document_status_accent.setProperty("stateTone", tone)
+        self._document_status_state_dot.setProperty("stateTone", tone)
+        self._document_status_state_dot.setToolTip(state_text)
+        self._repolish_widget(self._document_status_state_chip)
+        self._repolish_widget(self._document_status_accent)
+        self._repolish_widget(self._document_status_state_dot)
+
+    def _compact_status_text(self, text: str, max_chars: int = 30) -> str:
+        """Return a compact single-line status-bar label with middle truncation."""
+        compact = " ".join(str(text).split())
+        if len(compact) <= max_chars:
+            return compact
+        head = max_chars // 2 - 1
+        tail = max_chars - head - 1
+        return f"{compact[:head]}…{compact[-tail:]}"
+
+    def _repolish_widget(self, widget):
+        """Refresh styles after dynamic property updates."""
+        style = widget.style()
+        if style is not None:
+            style.unpolish(widget)
+            style.polish(widget)
+        widget.update()
+
+    def _create_tab_close_icon(self) -> QIcon:
+        """Create a subtle close icon for editor tabs."""
+        icon = QIcon()
+        for mode, color in (
+            (QIcon.Mode.Normal, QColor(CHROME.text_muted)),
+            (QIcon.Mode.Active, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Selected, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Disabled, QColor(CHROME.border_strong)),
+        ):
+            pixmap = QPixmap(12, 12)
+            pixmap.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(color)
+            pen.setWidthF(1.5)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(3, 3, 9, 9)
+            painter.drawLine(9, 3, 3, 9)
+            painter.end()
+            icon.addPixmap(pixmap, mode)
+        return icon
+
+    def _refresh_tab_close_buttons(self):
+        """Replace default tab close buttons with the shared chrome version."""
+        if not hasattr(self, "_tab_widget"):
+            return
+
+        tab_bar = self._tab_widget.tabBar()
+        close_side = self._tab_close_button_position()
+        for index in range(tab_bar.count()):
+            tab_widget = self._tab_widget.widget(index)
+            for side in (QTabBar.ButtonPosition.LeftSide, QTabBar.ButtonPosition.RightSide):
+                existing = tab_bar.tabButton(index, side)
+                if existing is not None:
+                    tab_bar.setTabButton(index, side, None)
+                    existing.deleteLater()
+
+            button = QToolButton(tab_bar)
+            button.setObjectName("editorTabCloseButton")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAutoRaise(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setIcon(self._create_tab_close_icon())
+            button.setIconSize(QSize(9, 9))
+            button.setToolTip(tr("menu_close"))
+            button.clicked.connect(
+                lambda checked=False, tab=tab_widget: self._close_editor_tab_widget(tab)
+            )
+            tab_bar.setTabButton(index, close_side, button)
+
+    def _tab_close_button_position(self) -> QTabBar.ButtonPosition:
+        """Return the style-preferred side for editor tab close buttons."""
+        if not hasattr(self, "_tab_widget"):
+            return QTabBar.ButtonPosition.RightSide
+
+        tab_bar = self._tab_widget.tabBar()
+        style = tab_bar.style()
+        if style is None:
+            return QTabBar.ButtonPosition.RightSide
+
+        close_side = style.styleHint(QStyle.StyleHint.SH_TabBar_CloseButtonPosition, None, tab_bar)
+        if close_side in (
+            QTabBar.ButtonPosition.LeftSide,
+            QTabBar.ButtonPosition.LeftSide.value,
+        ):
+            return QTabBar.ButtonPosition.LeftSide
+        return QTabBar.ButtonPosition.RightSide
+
+    def _close_editor_tab_widget(self, tab_widget: QWidget):
+        """Close the tab that owns a custom close button."""
+        if not hasattr(self, "_tab_widget") or tab_widget is None:
+            return
+
+        index = self._tab_widget.indexOf(tab_widget)
+        if index >= 0:
+            self._on_close_tab(index)
+
+    def _show_status_message(self, message: str, timeout: int = 3000):
         """Show a temporary message in the status bar."""
-        self._msg_label.setText(message)
-        QTimer.singleShot(3000, lambda: self._msg_label.setText(""))
+        if not hasattr(self, "_status_message_timer"):
+            self._status_message_timer = QTimer(self)
+            self._status_message_timer.setSingleShot(True)
+            self._status_message_timer.timeout.connect(self._clear_current_status_message)
+        self._msg_label.setText(self._compact_status_text(message, max_chars=18))
+        self._msg_label.setToolTip(message)
+        self._msg_label.setVisible(bool(message))
+        if timeout and message:
+            self._status_message_timer.start(timeout)
+        elif hasattr(self, "_status_message_timer"):
+            self._status_message_timer.stop()
+
+    def _clear_current_status_message(self):
+        """Clear the current transient status message."""
+        self._msg_label.clear()
+        self._msg_label.setToolTip("")
+        self._msg_label.setVisible(False)
 
     def _create_right_panel(self):
         """Create right side info panel."""
         widget = QWidget()
+        widget.setObjectName("rightPanelShell")
+        widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        widget.setStyleSheet(f"""
+            QFrame#rightPanelSwitcher {{
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid {CHROME.border};
+            }}
+            QTabBar#rightPanelTabBar {{
+                background: transparent;
+                border: none;
+            }}
+            QTabBar#rightPanelTabBar::tab {{
+                background-color: transparent;
+                color: {CHROME.text_muted};
+                border: none;
+                border-bottom: 2px solid transparent;
+                padding: 0 12px;
+                min-height: 26px;
+                font-size: 10px;
+                font-weight: 700;
+                margin-right: 6px;
+            }}
+            QTabBar#rightPanelTabBar::tab:hover:!selected {{
+                background-color: {CHROME.surface_alt};
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                color: {CHROME.text_primary};
+            }}
+            QTabBar#rightPanelTabBar::tab:selected {{
+                background-color: transparent;
+                border-bottom-color: {CHROME.accent};
+                color: {CHROME.text_primary};
+            }}
+            QFrame#sidePanelViewFrame {{
+                background: transparent;
+                border: none;
+            }}
+            QFrame#sidePanelViewFrame[activeView="true"] {{
+                background: transparent;
+                border: none;
+            }}
+            QFrame#sidePanelViewHeader {{
+                background: transparent;
+                border: none;
+            }}
+            QFrame#sidePanelViewAccent {{
+                min-width: 4px;
+                max-width: 4px;
+                min-height: 14px;
+                max-height: 14px;
+                border-radius: 2px;
+                background-color: {CHROME.border_strong};
+            }}
+            QFrame#sidePanelViewFrame[activeView="true"] QFrame#sidePanelViewAccent {{
+                background-color: {CHROME.accent};
+            }}
+            QLabel#sidePanelViewLabel {{
+                color: {CHROME.text_muted};
+                font-size: 9px;
+                font-weight: 700;
+            }}
+            QFrame#sidePanelViewBody {{
+                background: transparent;
+                border: none;
+            }}
+        """)
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(5)
+
+        self._right_panel_switcher = QFrame()
+        self._right_panel_switcher.setObjectName("rightPanelSwitcher")
+        self._right_panel_switcher.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._right_panel_switcher.setFixedHeight(34)
+        self._right_panel_switcher.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._right_panel_switcher_layout = QHBoxLayout(self._right_panel_switcher)
+        self._right_panel_switcher_layout.setContentsMargins(0, 0, 0, 0)
+        self._right_panel_switcher_layout.setSpacing(0)
+        self._right_panel_tab_bar = QTabBar(self._right_panel_switcher)
+        self._right_panel_tab_bar.setObjectName("rightPanelTabBar")
+        self._right_panel_tab_bar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._right_panel_tab_bar.setDrawBase(False)
+        self._right_panel_tab_bar.setDocumentMode(True)
+        self._right_panel_tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
+        self._right_panel_tab_bar.setExpanding(False)
+        self._right_panel_tab_bar.setMovable(False)
+        self._right_panel_tab_bar.setUsesScrollButtons(False)
+        self._right_panel_tab_bar.currentChanged.connect(self._on_side_panel_switcher_changed)
+        self._right_panel_switcher_layout.addWidget(self._right_panel_tab_bar, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._right_panel_switcher_layout.addStretch()
+        self._right_panel_switcher.hide()
+        self._panel_switcher_tabs = {}
+        layout.addWidget(self._right_panel_switcher)
 
         self._right_panel_content = QWidget()
-        self._right_panel_content.setStyleSheet("background-color: #252526;")
+        self._right_panel_content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._right_panel_content.setObjectName("rightPanelContent")
+        self._right_panel_content.setStyleSheet("background: transparent;")
         self._right_panel_content_layout = QVBoxLayout()
         self._right_panel_content_layout.setContentsMargins(0, 0, 0, 0)
         self._right_panel_content_layout.setSpacing(0)
         self._right_panel_content.setLayout(self._right_panel_content_layout)
 
-        self._panel_tabs = QTabWidget()
-        self._panel_tabs.setDocumentMode(True)
-        self._panel_tabs.tabBar().setDrawBase(False)
-        self._panel_tabs.tabBar().setExpanding(False)
-        self._panel_tabs.currentChanged.connect(self._on_side_panel_tab_changed)
-        self._panel_tabs.setStyleSheet("""
-            QTabWidget {
-                background-color: #252526;
-            }
-            QTabWidget::pane {
-                background-color: #252526;
-                border: none;
-                margin-top: 0px;
-            }
-            QTabBar {
-                background-color: transparent;
-            }
-            QTabBar::tab {
-                background-color: transparent;
-                color: #a6a6a6;
-                padding: 8px 14px 7px;
-                margin: 0 6px 0 0;
-                border: none;
-                border-bottom: 2px solid transparent;
-                font-weight: 600;
-            }
-            QTabBar::tab:selected {
-                color: #ffffff;
-                border-bottom-color: #0e639c;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #2d2d30;
-                color: #ffffff;
-            }
-        """)
-
-        self._panel_vertical_splitter = self._create_side_panel_splitter(Qt.Orientation.Vertical)
-        self._panel_horizontal_splitter = self._create_side_panel_splitter(Qt.Orientation.Horizontal)
-
         self._data_value = self._create_data_value_panel()
-        self._ai_panel = self._create_ai_panel()
         self._structure_panel = self._create_structure_panel()
+        self._panel_horizontal_splitter = self._create_side_panel_splitter(Qt.Orientation.Horizontal)
         self._side_panels = {
-            "value": self._data_value,
-            "ai": self._ai_panel,
+            "data": self._data_value,
             "structure": self._structure_panel,
         }
+        self._side_panel_hosts = {
+            panel_id: self._create_side_panel_host(panel_id, panel)
+            for panel_id, panel in self._side_panels.items()
+        }
+        self._right_panel_stack_host = QWidget(self._right_panel_content)
+        self._right_panel_stack_host.setObjectName("rightPanelStackHost")
+        self._right_panel_stack_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._right_panel_stack_host.setStyleSheet("background: transparent;")
+        self._right_panel_stack = QStackedLayout()
+        self._right_panel_stack.setContentsMargins(0, 0, 0, 0)
+        self._right_panel_stack.setStackingMode(QStackedLayout.StackingMode.StackOne)
+        for panel_id in ("data", "structure"):
+            self._right_panel_stack.addWidget(self._side_panel_hosts[panel_id])
+        self._right_panel_stack_host.setLayout(self._right_panel_stack)
+        self._right_panel_content_layout.addWidget(self._right_panel_stack_host, 1)
 
-        layout.addWidget(self._right_panel_content)
+        layout.addWidget(self._right_panel_content, 1)
         self._right_panel_status_bar = self._create_side_panel_status_bar()
         layout.addWidget(self._right_panel_status_bar)
         widget.setLayout(layout)
-        widget.setMinimumWidth(240)
+        widget.setMinimumWidth(228)
+        widget.installEventFilter(self)
 
         self._refresh_side_panel_layout()
         return widget
@@ -466,110 +1262,285 @@ class HexEditorMainWindow(QWidget):
         """Create a splitter used for multi-panel layouts."""
         splitter = QSplitter(orientation)
         splitter.setChildrenCollapsible(False)
-        splitter.setHandleWidth(1)
-        splitter.setStyleSheet("""
-            QSplitter {
-                background-color: #252526;
-            }
-            QSplitter::handle {
-                background-color: #3c3c3c;
-            }
+        splitter.setHandleWidth(6)
+        splitter.setStyleSheet(f"""
+            QSplitter {{
+                background: transparent;
+            }}
+            QSplitter::handle {{
+                background-color: transparent;
+                margin: 1px;
+                border-radius: 3px;
+            }}
+            QSplitter::handle:hover {{
+                background-color: {CHROME.border};
+            }}
         """)
         return splitter
 
+    def _create_side_panel_host(self, panel_id: str, panel_widget: QWidget) -> QFrame:
+        """Wrap a panel in a compact host container for multi-view layouts."""
+        host = QFrame()
+        host.setObjectName("sidePanelViewFrame")
+        host.setProperty("panelId", panel_id)
+        host.setProperty("activeView", "false")
+        host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QFrame(host)
+        header.setObjectName("sidePanelViewHeader")
+        header.setFixedHeight(24)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(10, 6, 10, 4)
+        header_layout.setSpacing(6)
+
+        accent = QFrame(header)
+        accent.setObjectName("sidePanelViewAccent")
+        header_layout.addWidget(accent, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        label = QLabel(self._get_panel_label(panel_id))
+        label.setObjectName("sidePanelViewLabel")
+        header_layout.addWidget(label, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addStretch()
+
+        body = QFrame(host)
+        body.setObjectName("sidePanelViewBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        body_layout.addWidget(panel_widget)
+
+        layout.addWidget(header)
+        layout.addWidget(body, 1)
+
+        host._header = header
+        return host
+
+    def _clear_side_panel_switcher(self):
+        """Remove any previously rendered inspector tabs."""
+        blocked = self._right_panel_tab_bar.blockSignals(True)
+        while self._right_panel_tab_bar.count():
+            self._right_panel_tab_bar.removeTab(0)
+        self._right_panel_tab_bar.blockSignals(blocked)
+        self._panel_switcher_tabs = {}
+
+    def _rebuild_side_panel_switcher(self, active_panel_ids: List[str]):
+        """Render VS Code-style tabs for the currently visible inspector panels."""
+        self._clear_side_panel_switcher()
+        show_switcher = len(active_panel_ids) > 1
+        self._right_panel_switcher.setVisible(show_switcher)
+        if not show_switcher:
+            return
+
+        blocked = self._right_panel_tab_bar.blockSignals(True)
+        for panel_id in active_panel_ids:
+            index = self._right_panel_tab_bar.addTab(self._get_panel_tab_label(panel_id))
+            self._right_panel_tab_bar.setTabData(index, panel_id)
+            self._right_panel_tab_bar.setTabToolTip(index, self._get_panel_label(panel_id))
+            self._panel_switcher_tabs[panel_id] = index
+        self._update_side_panel_switcher_state(active_panel_ids)
+        self._right_panel_tab_bar.blockSignals(blocked)
+
+    def _update_side_panel_switcher_state(self, active_panel_ids: List[str] | None = None):
+        """Refresh the visible tab selection for the current panel set."""
+        if active_panel_ids is None:
+            active_panel_ids = self._get_active_panel_ids()
+
+        target_index = self._panel_switcher_tabs.get(self._active_panel_id, -1)
+        if target_index < 0 and active_panel_ids:
+            target_index = self._panel_switcher_tabs.get(active_panel_ids[0], -1)
+        if target_index < 0:
+            return
+
+        blocked = self._right_panel_tab_bar.blockSignals(True)
+        self._right_panel_tab_bar.setCurrentIndex(target_index)
+        self._right_panel_tab_bar.blockSignals(blocked)
+
+    def _on_side_panel_switcher_changed(self, index: int) -> None:
+        """Switch the visible inspector page when the tab bar selection changes."""
+        panel_id = self._right_panel_tab_bar.tabData(index)
+        if not panel_id:
+            return
+        self._set_active_side_panel(str(panel_id))
+
+    def _set_active_side_panel(self, panel_id: str):
+        """Focus a specific side panel from the inspector tab bar."""
+        active_panel_ids = self._get_active_panel_ids()
+        if panel_id not in active_panel_ids:
+            return
+
+        self._active_panel_id = panel_id
+        self._show_active_side_panel(panel_id, active_panel_ids)
+        self._save_side_panel_settings()
+
+    def _show_active_side_panel(self, panel_id: str, active_panel_ids: List[str] | None = None) -> None:
+        """Display the requested side panel inside the stacked inspector content area."""
+        if active_panel_ids is None:
+            active_panel_ids = self._get_active_panel_ids()
+        host = self._side_panel_hosts.get(panel_id)
+        if host is None:
+            return
+        self._right_panel_stack.setCurrentWidget(host)
+        for current_panel_id, current_host in self._side_panel_hosts.items():
+            should_show = current_panel_id in active_panel_ids and current_panel_id == panel_id
+            current_host.setVisible(should_show)
+            if should_show:
+                current_host.show()
+            else:
+                current_host.hide()
+        self._update_side_panel_host_states(active_panel_ids, emphasized_panel_id=panel_id)
+        self._update_side_panel_switcher_state(active_panel_ids)
+
+    def _update_side_panel_host_states(
+        self,
+        active_panel_ids: List[str],
+        *,
+        emphasized_panel_id: str | None = None,
+        show_headers: bool = False,
+    ) -> None:
+        """Update host chrome to match the current right-panel arrangement."""
+        for panel_id, host in self._side_panel_hosts.items():
+            host.setProperty("activeView", "true" if panel_id == emphasized_panel_id else "false")
+            header = getattr(host, "_header", None)
+            if header is not None:
+                header.setVisible(show_headers and panel_id in active_panel_ids)
+            host.style().unpolish(host)
+            host.style().polish(host)
+
+        self._update_side_panel_switcher_state(active_panel_ids)
+
     def _create_side_panel_status_bar(self):
-        """Create the side panel status bar shown when multiple panels are active."""
+        """Create the compact footer for the inspector shell."""
         bar = QFrame()
+        bar.setObjectName("sidePanelStatusBar")
         bar.setFixedHeight(30)
-        bar.setStyleSheet("""
-            QFrame {
-                background-color: #2d2d30;
-                border-top: 1px solid #3c3c3c;
-            }
-            QPushButton {
-                background-color: transparent;
-                color: #cccccc;
+        bar.setStyleSheet(f"""
+            QFrame#sidePanelStatusBar {{
+                background: transparent;
                 border: none;
-                border-radius: 3px;
-                padding: 4px 8px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #37373d;
-            }
-            QPushButton:checked {
-                background-color: #094771;
-                color: #ffffff;
-            }
-            QLabel {
-                color: #cccccc;
+            }}
+            QFrame#sidePanelSummaryGroup,
+            QFrame#sidePanelControlsGroup {{
+                background-color: {CHROME.surface_alt};
+                border: 1px solid {CHROME.border};
+                border-radius: 9px;
+            }}
+            QFrame#sidePanelGroupDivider {{
+                background-color: {CHROME.border};
+                min-width: 1px;
+                max-width: 1px;
+                min-height: 12px;
+                margin: 5px 2px;
+            }}
+            QLabel#sidePanelCountChip {{
+                background-color: {CHROME.surface_raised};
+                color: {CHROME.text_primary};
+                border: 1px solid {CHROME.border_strong};
+                border-radius: 7px;
+                padding: 2px 7px;
+                font-size: 9px;
+                font-weight: 700;
+            }}
+            QLabel#sidePanelSummaryChip,
+            QLabel#sidePanelModeChip {{
+                background: transparent;
+                color: {CHROME.text_secondary};
                 border: none;
-            }
-            QToolButton {
-                background-color: transparent;
-                border: none;
-                padding: 4px;
-                border-radius: 3px;
-            }
-            QToolButton:hover {
-                background-color: #37373d;
-            }
-            QToolButton:checked {
-                background-color: #094771;
-            }
-            QToolButton:disabled {
-                opacity: 0.45;
-            }
+                padding: 0 6px;
+                font-size: 9px;
+                font-weight: 600;
+            }}
+            QLabel#sidePanelModeChip {{
+                color: {CHROME.text_primary};
+                font-weight: 700;
+                padding-right: 8px;
+            }}
         """)
 
         layout = QHBoxLayout()
-        layout.setContentsMargins(8, 0, 6, 0)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        summary_group, summary_layout = self._create_status_cluster("sidePanelSummaryGroup")
+        summary_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._right_panel_count_label = QLabel("")
+        self._right_panel_count_label.setObjectName("sidePanelCountChip")
+        summary_layout.addWidget(self._right_panel_count_label)
+        self._add_status_cluster_divider(summary_layout, "sidePanelGroupDivider")
 
         self._right_panel_status_label = QLabel("")
-        layout.addWidget(self._right_panel_status_label)
-        layout.addStretch()
+        self._right_panel_status_label.setObjectName("sidePanelSummaryChip")
+        self._right_panel_status_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        summary_layout.addWidget(self._right_panel_status_label, 1)
+        layout.addWidget(summary_group, 1, Qt.AlignmentFlag.AlignVCenter)
 
-        self._layout_button_group = QButtonGroup(self)
-        self._layout_button_group.setExclusive(True)
-        self._panel_layout_buttons = {}
-
-        for layout_mode, tooltip in (
-            ("tabs", tr("panel_layout_tabs")),
-            ("vertical", tr("panel_layout_vertical")),
-            ("horizontal", tr("panel_layout_horizontal")),
-        ):
-            button = QToolButton()
-            button.setCheckable(True)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setIcon(self._create_panel_layout_icon(layout_mode))
-            button.setToolTip(tooltip)
-            button.clicked.connect(lambda checked=False, mode=layout_mode: self.set_side_panel_layout_mode(mode))
-            self._layout_button_group.addButton(button)
-            self._panel_layout_buttons[layout_mode] = button
-            layout.addWidget(button)
+        controls_group, controls_layout = self._create_status_cluster("sidePanelControlsGroup")
+        self._right_panel_mode_label = QLabel("")
+        self._right_panel_mode_label.setObjectName("sidePanelModeChip")
+        controls_layout.addWidget(self._right_panel_mode_label)
+        layout.addWidget(controls_group, 0, Qt.AlignmentFlag.AlignVCenter)
 
         bar.setLayout(layout)
         bar.hide()
-
-        self._update_panel_layout_button()
         return bar
 
     def _get_panel_label(self, panel_id: str) -> str:
         """Return the user-facing label for a side panel."""
         return {
-            "value": tr("panel_value_tab"),
-            "ai": tr("panel_ai_tab"),
+            "data": tr("panel_data_tab"),
             "structure": tr("panel_structure_tab"),
+            "info": tr("panel_info_tab"),
+            "ai": tr("panel_ai_tab"),
         }.get(panel_id, panel_id.title())
 
+    def _get_panel_tab_label(self, panel_id: str) -> str:
+        """Return the compact label used in the right-side tab switcher."""
+        return {
+            "data": tr("panel_data_tab_short"),
+            "structure": tr("panel_structure_tab_short"),
+            "info": tr("panel_info_tab_short"),
+            "ai": tr("panel_ai_tab_short"),
+        }.get(panel_id, self._get_panel_label(panel_id))
+
     def _get_active_panel_ids(self) -> List[str]:
-        """Return visible side panels in their display order."""
-        return [
-            panel_id
-            for panel_id in ("value", "ai", "structure")
-            if self._panel_visibility.get(panel_id, False)
-        ]
+        """Return visible inspector panels hosted inside the right column."""
+        active_panel_ids: list[str] = []
+        if self._panel_visibility["value"]:
+            active_panel_ids.append("data")
+        if self._panel_visibility["structure"]:
+            active_panel_ids.append("structure")
+        return active_panel_ids
+
+    def _current_right_panel_content_width(self) -> int:
+        """Return the best-known width for the inspector content area."""
+        if hasattr(self, "_right_panel_content") and self._right_panel_content.width() > 0:
+            return self._right_panel_content.width()
+        if hasattr(self, "_right_panel") and self._right_panel.width() > 0:
+            return self._right_panel.width()
+        if self._splitter is not None:
+            sizes = self._splitter.sizes()
+            if len(sizes) > 3 and sizes[3] > 0:
+                return sizes[3]
+        return max(self._right_panel_width, 0)
+
+    def _resolved_side_panel_layout(self, active_panel_ids: List[str]) -> tuple[str, List[str]]:
+        """Resolve the top-level inspector arrangement."""
+        ordered_ids = list(active_panel_ids)
+        if len(ordered_ids) <= 1:
+            return "single", ordered_ids
+        return "tabs", ordered_ids
+
+    def _clear_splitter(self, splitter: QSplitter) -> None:
+        """Remove all child widgets from a splitter."""
+        while splitter.count():
+            widget = splitter.widget(0)
+            if widget is None:
+                break
+            widget.setParent(None)
 
     def _clear_layout(self, layout):
         """Detach all widgets from a layout."""
@@ -579,70 +1550,53 @@ class HexEditorMainWindow(QWidget):
             if widget is not None:
                 widget.setParent(None)
 
+    def _panel_host_minimum_width(self, panel_id: str, panel_count: int) -> int:
+        """Return a readability-focused minimum width for horizontal panel rows."""
+        if panel_id == "ai":
+            return 300
+        if panel_id == "info":
+            return 320 if panel_count > 1 else 260
+        return 300 if panel_count > 1 else 260
+
+    def _update_right_panel_minimum_width(
+        self,
+        active_panel_ids: List[str],
+        resolved_layout: str,
+    ) -> None:
+        """Keep the inspector shell wide enough to avoid unreadable micro-panels."""
+        right_panel = getattr(self, "_right_panel", None)
+        if right_panel is None:
+            return
+        minimum_width = 228
+        if resolved_layout == "tabs":
+            minimum_width = 292
+        right_panel.setMinimumWidth(minimum_width)
+
     def _detach_side_panel_widgets(self):
         """Remove side panels from any temporary container before rebuilding."""
-        blocked = self._panel_tabs.blockSignals(True)
-        while self._panel_tabs.count():
-            widget = self._panel_tabs.widget(0)
-            self._panel_tabs.removeTab(0)
-            widget.setParent(None)
-        self._panel_tabs.blockSignals(blocked)
-
-        for splitter in (self._panel_vertical_splitter, self._panel_horizontal_splitter):
-            while splitter.count():
-                widget = splitter.widget(0)
-                if widget is None:
-                    break
-                widget.setParent(None)
-
-        for widget in self._side_panels.values():
-            if widget.parent() is self._right_panel_content:
-                widget.setParent(None)
+        self._clear_splitter(self._panel_horizontal_splitter)
 
     def _activate_side_panel_widgets(self, panel_ids: List[str]):
-        """Ensure moved panel widgets become visible again after layout changes."""
-        for panel_id in panel_ids:
-            widget = self._side_panels[panel_id]
+        """Refresh geometry for hosted inspector pages before selecting one."""
+        for current_panel_id, widget in self._side_panel_hosts.items():
+            widget.setVisible(current_panel_id in panel_ids)
             widget.updateGeometry()
 
-        if self._panel_layout_mode == "tabs" and len(panel_ids) > 1:
-            active_panel_id = (
-                self._active_panel_id if self._active_panel_id in panel_ids else panel_ids[0]
-            )
-            for panel_id in panel_ids:
-                self._side_panels[panel_id].setVisible(panel_id == active_panel_id)
-            return
-
-        for panel_id in panel_ids:
-            widget = self._side_panels[panel_id]
-            widget.setVisible(True)
-            widget.show()
-
     def _sync_tab_panel_visibility(self):
-        """Keep only the active tab page visible when using tab layout."""
-        if self._panel_layout_mode != "tabs":
-            return
-
-        active_panel_ids = self._get_active_panel_ids()
-        if len(active_panel_ids) <= 1:
-            return
-
-        active_panel_id = (
-            self._active_panel_id if self._active_panel_id in active_panel_ids else active_panel_ids[0]
-        )
-        for panel_id in active_panel_ids:
-            self._side_panels[panel_id].setVisible(panel_id == active_panel_id)
+        """Legacy no-op kept for callers that previously used tabbed shell layouts."""
+        return
 
     def _ensure_right_panel_width(self, minimum_width: int):
         """Expand the right panel when the active layout needs more space."""
-        if self._splitter is None or not self._is_side_panel_visible(self._right_panel, 2):
+        right_panel = getattr(self, "_right_panel", None)
+        if self._splitter is None or right_panel is None or not self._is_side_panel_visible(right_panel, 3):
             return
 
         sizes = self._splitter.sizes()
-        if len(sizes) <= 2 or sizes[2] >= minimum_width:
+        if len(sizes) <= 3 or sizes[3] >= minimum_width:
             return
 
-        delta = minimum_width - sizes[2]
+        delta = minimum_width - sizes[3]
         if delta <= 0:
             return
 
@@ -650,45 +1604,46 @@ class HexEditorMainWindow(QWidget):
         if grow <= 0:
             return
 
-        sizes[2] += grow
+        sizes[3] += grow
         sizes[1] -= grow
-        self._right_panel_width = sizes[2]
-        self._right_panel_horizontal_width = sizes[2]
+        self._right_panel_width = sizes[3]
+        self._right_panel_horizontal_width = sizes[3]
         self._splitter.setSizes(sizes)
 
     def _capture_right_panel_width(self):
         """Remember the current right panel width for the active layout family."""
-        if self._splitter is None or not self._is_side_panel_visible(self._right_panel, 2):
+        if self._splitter is None or not self._is_side_panel_visible(self._right_panel, 3):
             return
 
         sizes = self._splitter.sizes()
-        if len(sizes) <= 2 or sizes[2] <= 0:
+        if len(sizes) <= 3 or sizes[3] <= 0:
             return
 
-        current_width = sizes[2]
+        current_width = sizes[3]
         self._right_panel_width = current_width
-        if self._panel_layout_mode == "horizontal":
+        resolved_layout, _ = self._resolved_side_panel_layout(self._get_active_panel_ids())
+        if resolved_layout == "horizontal":
             self._right_panel_horizontal_width = current_width
         else:
             self._right_panel_standard_width = current_width
 
     def _set_right_panel_width(self, target_width: int):
         """Resize the right splitter pane to a target width when possible."""
-        if self._splitter is None or not self._is_side_panel_visible(self._right_panel, 2):
+        if self._splitter is None or not self._is_side_panel_visible(self._right_panel, 3):
             return
 
         sizes = self._splitter.sizes()
-        if len(sizes) <= 2:
+        if len(sizes) <= 3:
             return
 
-        available = sizes[1] + sizes[2]
+        available = sizes[1] + sizes[3]
         max_target = max(160, available - 200)
         clamped_target = max(160, min(target_width, max_target))
-        if clamped_target == sizes[2]:
+        if clamped_target == sizes[3]:
             self._right_panel_width = clamped_target
             return
 
-        sizes[2] = clamped_target
+        sizes[3] = clamped_target
         sizes[1] = available - clamped_target
         self._right_panel_width = clamped_target
         self._splitter.setSizes(sizes)
@@ -699,8 +1654,9 @@ class HexEditorMainWindow(QWidget):
         if not active_panel_ids:
             return
 
-        if len(active_panel_ids) > 1 and self._panel_layout_mode == "horizontal":
-            target_width = max(self._right_panel_horizontal_width, 520)
+        resolved_layout, _ = self._resolved_side_panel_layout(active_panel_ids)
+        if len(active_panel_ids) > 1 and resolved_layout == "horizontal":
+            target_width = max(self._right_panel_horizontal_width, 620)
         else:
             target_width = self._right_panel_standard_width
 
@@ -708,122 +1664,145 @@ class HexEditorMainWindow(QWidget):
 
     def _schedule_right_panel_width_restore(self):
         """Apply right panel width after Qt finishes processing pending layout changes."""
-        QTimer.singleShot(0, self._apply_right_panel_width_for_layout)
+        QTimer.singleShot(0, self._apply_right_panel_width_for_layout_safe)
+
+    def _apply_right_panel_width_for_layout_safe(self) -> None:
+        """Safely restore panel width when deferred callbacks outlive transient widgets."""
+        try:
+            self._apply_right_panel_width_for_layout()
+        except RuntimeError:
+            return
+
+    def _apply_splitter_sizes_safe(self, splitter: QSplitter, sizes: List[int]) -> None:
+        """Apply splitter ratios while tolerating widgets destroyed during teardown."""
+        try:
+            splitter.setSizes(list(sizes))
+        except RuntimeError:
+            return
+
+    def _schedule_splitter_sizes(self, splitter: QSplitter, sizes: List[int]) -> None:
+        """Queue a splitter resize after Qt finishes the current layout pass."""
+        planned_sizes = list(sizes)
+        QTimer.singleShot(
+            0,
+            lambda target_splitter=splitter, target_sizes=planned_sizes: self._apply_splitter_sizes_safe(
+                target_splitter,
+                target_sizes,
+            ),
+        )
+
+    def _refresh_side_panel_layout_safe(self) -> None:
+        """Safely rebuild inspector layout from deferred resize callbacks."""
+        try:
+            self._refresh_side_panel_layout()
+        except RuntimeError:
+            return
 
     def _refresh_side_panel_layout(self):
         """Rebuild the right-side panel area based on visibility and layout state."""
         active_panel_ids = self._get_active_panel_ids()
         if self._active_panel_id not in active_panel_ids:
-            self._active_panel_id = active_panel_ids[0] if active_panel_ids else "value"
+            self._active_panel_id = active_panel_ids[0] if active_panel_ids else "data"
 
-        self._clear_layout(self._right_panel_content_layout)
-        self._detach_side_panel_widgets()
+        resolved_layout, ordered_panel_ids = self._resolved_side_panel_layout(active_panel_ids)
+        self._resolved_side_panel_signature = (
+            resolved_layout,
+            tuple(ordered_panel_ids),
+        )
+
+        self._rebuild_side_panel_switcher(active_panel_ids)
+        self._update_right_panel_minimum_width(active_panel_ids, resolved_layout)
 
         if not active_panel_ids:
+            self._right_panel_content.setVisible(False)
+            self._update_side_panel_host_states(active_panel_ids)
             self._update_side_panel_status_bar(active_panel_ids)
             return
-
-        if len(active_panel_ids) == 1:
-            self._right_panel_content_layout.addWidget(self._side_panels[active_panel_ids[0]])
-            self._activate_side_panel_widgets(active_panel_ids)
-            self._active_panel_id = active_panel_ids[0]
-            self._update_side_panel_status_bar(active_panel_ids)
-            return
-
-        if self._panel_layout_mode == "vertical":
-            splitter = self._panel_vertical_splitter
-            self._right_panel_content_layout.addWidget(splitter)
-            for panel_id in active_panel_ids:
-                splitter.addWidget(self._side_panels[panel_id])
-            self._activate_side_panel_widgets(active_panel_ids)
-            splitter.setVisible(True)
-            splitter.show()
-            QTimer.singleShot(0, lambda: splitter.setSizes([1] * len(active_panel_ids)))
-        elif self._panel_layout_mode == "horizontal":
-            splitter = self._panel_horizontal_splitter
-            self._right_panel_content_layout.addWidget(splitter)
-            for panel_id in active_panel_ids:
-                splitter.addWidget(self._side_panels[panel_id])
-            self._activate_side_panel_widgets(active_panel_ids)
-            splitter.setVisible(True)
-            splitter.show()
-            self._ensure_right_panel_width(520)
-            QTimer.singleShot(0, lambda: splitter.setSizes([1] * len(active_panel_ids)))
-        else:
-            blocked = self._panel_tabs.blockSignals(True)
-            self._right_panel_content_layout.addWidget(self._panel_tabs)
-            for panel_id in active_panel_ids:
-                self._panel_tabs.addTab(self._side_panels[panel_id], self._get_panel_label(panel_id))
-            target_index = active_panel_ids.index(self._active_panel_id) if self._active_panel_id in active_panel_ids else 0
-            self._panel_tabs.setCurrentIndex(target_index)
-            self._panel_tabs.blockSignals(blocked)
-            self._activate_side_panel_widgets(active_panel_ids)
-            self._panel_tabs.setVisible(True)
-            self._panel_tabs.show()
 
         self._right_panel_content.setVisible(True)
         self._right_panel_content.show()
+        self._activate_side_panel_widgets(ordered_panel_ids)
+        self._show_active_side_panel(self._active_panel_id, active_panel_ids)
         right_panel = getattr(self, "_right_panel", None)
         if right_panel is not None:
             right_panel.updateGeometry()
         self._update_side_panel_status_bar(active_panel_ids)
 
     def _update_side_panel_status_bar(self, active_panel_ids: List[str]):
-        """Update side panel buttons and layout action visibility."""
-        show_bar = len(active_panel_ids) > 1
-        self._right_panel_status_bar.setVisible(show_bar)
-        self._update_panel_layout_button()
-
-        if not show_bar:
-            return
-
-        labels = [self._get_panel_label(panel_id) for panel_id in active_panel_ids]
-        self._right_panel_status_label.setText(" / ".join(labels))
+        """Hide the legacy right footer so the tabbed inspector stays visually quiet."""
+        self._right_panel_status_bar.hide()
 
     def _update_panel_layout_button(self):
-        """Refresh the side panel layout switcher icon and action state."""
-        has_multiple = len(self._get_active_panel_ids()) > 1
-        for layout_mode, button in self._panel_layout_buttons.items():
-            blocked = button.blockSignals(True)
-            button.setChecked(self._panel_layout_mode == layout_mode)
-            button.setEnabled(has_multiple)
-            button.blockSignals(blocked)
+        """Legacy no-op kept while the footer no longer owns layout toggles."""
+        return
 
     def _create_panel_layout_icon(self, mode: str) -> QIcon:
-        """Create a VS Code inspired icon for tabs/split mode."""
-        size = QSize(16, 16)
+        """Create a unified linear icon for side-panel layout actions."""
+        icon = QIcon()
+        states = (
+            (QIcon.Mode.Normal, QIcon.State.Off, QColor(CHROME.text_secondary)),
+            (QIcon.Mode.Active, QIcon.State.Off, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Selected, QIcon.State.Off, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Disabled, QIcon.State.Off, QColor(CHROME.text_muted)),
+            (QIcon.Mode.Normal, QIcon.State.On, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Active, QIcon.State.On, QColor(CHROME.text_primary)),
+            (QIcon.Mode.Selected, QIcon.State.On, QColor(CHROME.text_primary)),
+        )
+        for icon_mode, state, color in states:
+            icon.addPixmap(self._create_panel_layout_icon_pixmap(mode, color), icon_mode, state)
+        return icon
+
+    def _create_panel_layout_icon_pixmap(self, mode: str, color: QColor) -> QPixmap:
+        """Paint one state of a side-panel layout icon."""
+        size = QSize(14, 14)
         pixmap = QPixmap(size)
         pixmap.fill(Qt.GlobalColor.transparent)
 
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor("#cccccc"))
-        pen.setWidth(1)
+        pen = QPen(color)
+        pen.setWidthF(1.15)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
 
-        if mode == "vertical":
-            painter.drawRoundedRect(2, 2, 12, 12, 1.5, 1.5)
-            painter.drawLine(3, 8, 13, 8)
+        if mode == "adaptive":
+            painter.drawRoundedRect(2, 2, 10, 10, 2, 2)
+            painter.drawLine(7, 4, 7, 10)
+            painter.drawLine(9, 7, 10, 7)
+        elif mode == "vertical":
+            painter.drawRoundedRect(2, 2, 10, 10, 2, 2)
+            painter.drawLine(4, 7, 10, 7)
         elif mode == "horizontal":
-            painter.drawRoundedRect(2, 2, 12, 12, 1.5, 1.5)
-            painter.drawLine(8, 3, 8, 13)
+            painter.drawRoundedRect(2, 2, 10, 10, 2, 2)
+            painter.drawLine(7, 4, 7, 10)
         else:
-            painter.drawRoundedRect(2, 4, 12, 10, 1.5, 1.5)
-            painter.drawLine(2, 6, 14, 6)
-            painter.fillRect(3, 2, 4, 2, QColor("#cccccc"))
-            painter.fillRect(8, 2, 3, 2, QColor("#777777"))
+            painter.drawRoundedRect(2, 4, 10, 6, 2, 2)
+            painter.drawLine(4, 7, 10, 7)
+            painter.drawLine(4, 2, 6, 2)
+            painter.drawLine(8, 2, 10, 2)
 
         painter.end()
-        return QIcon(pixmap)
+        return pixmap
 
     def _sync_right_panel_visibility(self):
         """Show or hide the right panel based on active side panels."""
         self._set_side_panel_visibility(
             self._right_panel,
-            2,
+            3,
             bool(self._get_active_panel_ids()),
             "_right_panel_width",
-            280,
+            240,
+        )
+
+    def _sync_ai_panel_visibility(self):
+        """Show or hide the AI column beside the editor."""
+        self._set_side_panel_visibility(
+            self._ai_panel_shell,
+            2,
+            self._panel_visibility["ai"],
+            "_ai_panel_width",
+            max(280, CHROME.right_panel_width),
         )
 
     def is_right_panel_visible(self) -> bool:
@@ -832,10 +1811,10 @@ class HexEditorMainWindow(QWidget):
             return not self._right_panel.isHidden()
 
         sizes = self._splitter.sizes()
-        if len(sizes) <= 2:
+        if len(sizes) <= 3:
             return not self._right_panel.isHidden()
 
-        return not self._right_panel.isHidden() and sizes[2] > 0
+        return not self._right_panel.isHidden() and sizes[3] > 0
 
     def _emit_side_panel_state_changed(self):
         """Notify outer UI that side panel state changed."""
@@ -847,7 +1826,7 @@ class HexEditorMainWindow(QWidget):
         )
 
     def is_ai_panel_visible(self) -> bool:
-        """Return whether the AI panel is enabled in the side panel."""
+        """Return whether the AI workspace column is enabled."""
         return self._panel_visibility["ai"]
 
     def is_value_panel_visible(self) -> bool:
@@ -863,30 +1842,30 @@ class HexEditorMainWindow(QWidget):
         return self._panel_layout_mode
 
     def set_side_panel_layout_mode(self, mode: str):
-        """Switch between tabbed and split layouts."""
-        if mode not in {"tabs", "vertical", "horizontal"} or self._panel_layout_mode == mode:
+        """Legacy setter kept for compatibility with older tests and settings."""
+        if self._panel_layout_mode == "horizontal":
             return
 
-        self._capture_right_panel_width()
-        self._panel_layout_mode = mode
-        self._refresh_side_panel_layout()
-        self._apply_right_panel_width_for_layout()
-        self._schedule_right_panel_width_restore()
+        self._panel_layout_mode = "horizontal"
+        self._update_side_panel_status_bar(self._get_active_panel_ids())
         self._save_side_panel_settings()
         self._emit_side_panel_state_changed()
 
     def _on_side_panel_tab_changed(self, index: int):
-        """Track the active tab for the right-side panel area."""
-        if index < 0:
-            return
+        """Legacy no-op kept after removing top-level tabbed shell layouts."""
+        return
 
-        widget = self._panel_tabs.widget(index)
-        for panel_id, panel_widget in self._side_panels.items():
-            if widget is panel_widget:
-                self._active_panel_id = panel_id
-                self._sync_tab_panel_visibility()
-                self._save_side_panel_settings()
-                break
+    def eventFilter(self, watched, event):
+        """Track splitter width changes for the inspector shell."""
+        if watched is getattr(self, "_right_panel", None) and event.type() == QEvent.Type.Resize:
+            self._capture_right_panel_width()
+        elif (
+            watched is getattr(self, "_ai_panel_shell", None)
+            and event.type() == QEvent.Type.Resize
+            and self._is_side_panel_visible(self._ai_panel_shell, 2)
+        ):
+            self._ai_panel_width = max(self._ai_panel_shell.width(), 160)
+        return super().eventFilter(watched, event)
 
     def _set_side_panel_visibility(self, panel: QWidget, index: int, visible: bool,
                                    size_attr: str, default_size: int):
@@ -898,7 +1877,7 @@ class HexEditorMainWindow(QWidget):
         if len(sizes) <= index:
             return
 
-        current_visible = panel.isVisible() and sizes[index] > 0
+        current_visible = (not panel.isHidden()) and sizes[index] > 0
         if current_visible == visible:
             if visible and panel.isHidden():
                 panel.show()
@@ -922,13 +1901,13 @@ class HexEditorMainWindow(QWidget):
     def _is_side_panel_visible(self, panel: QWidget, index: int) -> bool:
         """Return whether a splitter side panel is effectively visible."""
         if self._splitter is None:
-            return panel.isVisible()
+            return not panel.isHidden()
 
         sizes = self._splitter.sizes()
         if len(sizes) <= index:
-            return panel.isVisible()
+            return not panel.isHidden()
 
-        return panel.isVisible() and sizes[index] > 0
+        return (not panel.isHidden()) and sizes[index] > 0
 
     def _create_data_value_panel(self):
         """Create data value inspection panel."""
@@ -937,6 +1916,20 @@ class HexEditorMainWindow(QWidget):
     def _create_structure_panel(self):
         """Create structure parsing panel."""
         return StructureViewPanel(self)
+
+    def _create_ai_workspace_panel(self):
+        """Create the AI column that lives beside the editor workspace."""
+        shell = QWidget()
+        shell.setObjectName("editorAIPanelShell")
+        shell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        shell.setMinimumWidth(260)
+        shell.installEventFilter(self)
+
+        layout = QVBoxLayout(shell)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._ai_panel)
+        return shell
 
     def _create_ai_panel(self):
         """Create AI analysis panel."""
@@ -948,6 +1941,11 @@ class HexEditorMainWindow(QWidget):
         """Connect signals."""
         self._document_model.document_changed.connect(self._on_document_changed)
         self._document_model.document_modified.connect(self._on_document_modified)
+
+    def shutdown(self) -> None:
+        """Tear down background UI helpers before the window is destroyed."""
+        if hasattr(self, "_ai_panel_widget"):
+            self._ai_panel_widget.shutdown()
 
     def _update_edit_mode_display(self, mode: str):
         """Update status bar with current edit mode."""
@@ -1018,18 +2016,26 @@ class HexEditorMainWindow(QWidget):
         hex_view = self._get_current_hex_view()
         doc = self._document_model.current_document
         if not hex_view or not doc:
-            self._pos_label.setText(tr("status_offset", "0x00000000"))
-            self._selection_label.setText(tr("status_selection", 0))
+            self._pos_label.setText("0x00000000")
+            self._selection_label.setText("0 B")
+            self._size_label.setText("0 B")
+            self._update_document_status_summary(None)
+            self._sync_file_browser_active_file(None)
             self._reset_value_panel()
             self._reset_structure_panel()
+            self._sync_current_view_bytes_per_row()
             return
 
+        self._sync_file_browser_active_file(doc)
+        self._update_document_status_summary(doc)
+        self._size_label.setText(FormatUtils.format_size(doc.file_size))
         offset = hex_view.get_offset_at_cursor()
         self._on_cursor_moved(offset)
+        self._sync_current_view_bytes_per_row()
 
     def _on_cursor_moved(self, offset: int):
         """Update side UI from the active cursor position."""
-        self._pos_label.setText(tr("status_offset", f"0x{max(0, offset):08X}"))
+        self._pos_label.setText(f"0x{max(0, offset):08X}")
         self._update_value_panel(offset)
         self._update_structure_panel(offset)
         self.cursor_changed.emit(offset)
@@ -1037,7 +2043,7 @@ class HexEditorMainWindow(QWidget):
     def _on_selection_changed(self, start: int, end: int):
         """Update the status bar selection size."""
         length = end - start + 1 if start >= 0 and end >= start else 0
-        self._selection_label.setText(tr("status_selection", length))
+        self._selection_label.setText(f"{length} B")
 
     # File operations
     def new_file(self):
@@ -1061,6 +2067,8 @@ class HexEditorMainWindow(QWidget):
 
     def open_file(self, path=None):
         """Open file."""
+        if isinstance(path, bool):
+            path = None
         if path is None:
             from PyQt6.QtWidgets import QFileDialog
             path, _ = QFileDialog.getOpenFileName(
@@ -1076,23 +2084,19 @@ class HexEditorMainWindow(QWidget):
 
     def _open_file(self, path: str):
         """Open file from path."""
-        doc = self._document_model.open_document(path)
+        normalized_path = os.path.abspath(path)
+        doc = self._document_model.open_document(normalized_path)
         if doc:
-            self._add_editor_tab(doc)
+            _index, created = self._add_editor_tab(doc)
 
-            # Load bytes_per_row from settings and apply to hex view
-            bytes_per_row = self._get_file_bytes_per_row(path)
-            current_widget = self._tab_widget.currentWidget()
-            if hasattr(current_widget, 'hex_view'):
-                current_widget.hex_view.set_bytes_per_row(bytes_per_row)
+            if created:
+                bytes_per_row = self._get_file_bytes_per_row(doc.file_path or normalized_path)
+                current_widget = self._tab_widget.currentWidget()
+                if hasattr(current_widget, 'hex_view'):
+                    current_widget.hex_view.set_bytes_per_row(bytes_per_row)
+            self._sync_current_view_bytes_per_row()
 
-            # Update arrangement label in status bar
-            self._arrangement_label.setText(f"等长帧: {bytes_per_row}")
-
-            # Also update data model
-            self._data_model.bytes_per_frame = bytes_per_row
-
-            self.file_opened.emit(path)
+            self.file_opened.emit(doc.file_path or normalized_path)
 
     def _on_file_open_request(self, path: str):
         """Handle file open request from file browser."""
@@ -1102,6 +2106,8 @@ class HexEditorMainWindow(QWidget):
     def open_folder(self, path=None):
         """Open folder in file tree."""
         from PyQt6.QtWidgets import QFileDialog
+        if isinstance(path, bool):
+            path = None
         if path is None:
             path = QFileDialog.getExistingDirectory(
                 self,
@@ -1109,7 +2115,16 @@ class HexEditorMainWindow(QWidget):
                 ""
             )
         if path:
+            if not self._is_side_panel_visible(self._file_browser, 0):
+                self._set_side_panel_visibility(
+                    self._file_browser,
+                    0,
+                    True,
+                    "_file_tree_width",
+                    CHROME.sidebar_width,
+                )
             self._file_browser.set_root_path(path)
+            self._sync_file_browser_active_file(self._document_model.current_document)
 
     def save_file(self):
         """Save current file."""
@@ -1144,6 +2159,7 @@ class HexEditorMainWindow(QWidget):
                 doc = self._document_model.current_document
                 if doc:
                     self._update_tab_name(self._tab_widget.currentIndex(), doc)
+                    self._sync_file_browser_active_file(doc)
                     if doc.file_path:
                         self.file_saved.emit(doc.file_path)
                 self._show_save_success_message()
@@ -1239,6 +2255,7 @@ class HexEditorMainWindow(QWidget):
     def set_arrangement_mode(self, mode: str):
         """Set arrangement mode."""
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QSpinBox, QDialogButtonBox, QLabel
+        from .dialogs.chrome import create_dialog_header
 
         mode_map = {
             "equal_frame": ArrangementMode.EQUAL_FRAME,
@@ -1253,6 +2270,15 @@ class HexEditorMainWindow(QWidget):
             dialog = QDialog(self)
             dialog.setWindowTitle("头长度参数设置")
             layout = QVBoxLayout()
+            layout.setContentsMargins(18, 18, 18, 18)
+            layout.setSpacing(14)
+
+            layout.addWidget(
+                create_dialog_header(
+                    "头长度参数设置",
+                    "配置头长度模式使用的字节数，并保持与其他设置弹窗一致的层次和配色。",
+                )
+            )
 
             info_label = QLabel("请输入头部长度（1-8字节）：")
             layout.addWidget(info_label)
@@ -1304,25 +2330,38 @@ class HexEditorMainWindow(QWidget):
 
     def _update_toolbar_for_mode(self, mode: str, param_value: int = None):
         """Update toolbar based on arrangement mode."""
-        # Try to access main window's toolbar controls
         main_window = self.window()
-        if hasattr(main_window, '_length_spinbox'):
-            if mode == "equal_frame":
-                # 等长帧模式：长度输入框范围1-65535
-                main_window._length_spinbox.setRange(1, 65535)
-                main_window._length_spinbox.setValue(self._data_model.bytes_per_frame)
-                main_window._toolbar_length_label.setText("长度:")
-                # Update status bar
-                self._arrangement_label.setText(f"等长帧: {self._data_model.bytes_per_frame}")
-            elif mode == "header_length":
-                # 头长度模式：长度输入框范围1-8
-                # 使用用户输入的值（如果提供）
-                header_len = param_value if param_value is not None else self._data_model.header_length
-                main_window._length_spinbox.setRange(1, 8)
-                main_window._length_spinbox.setValue(header_len)
-                main_window._toolbar_length_label.setText("头长度:")
-                # Update status bar
-                self._arrangement_label.setText(f"头长度: {header_len}")
+        current_hex_view = self._get_current_hex_view()
+        file_size = 0
+        start_offset = 0
+        if current_hex_view is not None:
+            model = current_hex_view._model
+            file_size = max(0, int(getattr(model, "_file_size", 0)))
+            if hasattr(current_hex_view, "get_start_offset"):
+                start_offset = current_hex_view.get_start_offset()
+            else:
+                start_offset = max(0, int(getattr(model, "_start_offset", 0)))
+
+        if mode == "equal_frame":
+            length_value = self._data_model.bytes_per_frame
+            length_range = (1, 65535)
+            self._arrangement_label.setText(
+                self._format_arrangement_status("equal_frame", self._data_model.bytes_per_frame)
+            )
+        else:
+            header_len = param_value if param_value is not None else self._data_model.header_length
+            length_value = header_len
+            length_range = (1, 8)
+            self._arrangement_label.setText(self._format_arrangement_status("header_length", header_len))
+
+        if hasattr(main_window, "_sync_arrangement_toolbar"):
+            main_window._sync_arrangement_toolbar(
+                mode=ArrangementMode.HEADER_LENGTH if mode == "header_length" else ArrangementMode.EQUAL_FRAME,
+                length_value=length_value,
+                length_range=length_range,
+                start_offset=start_offset,
+                max_start_offset=max(0, file_size - 1),
+            )
 
     def set_arrangement_length(self, length: int):
         """Set bytes per frame for equal frame mode."""
@@ -1331,16 +2370,34 @@ class HexEditorMainWindow(QWidget):
         current_widget = self._tab_widget.currentWidget()
         if hasattr(current_widget, 'hex_view'):
             current_widget.hex_view.set_bytes_per_row(length)
+        self._update_toolbar_for_mode("equal_frame", length)
         # Update status bar
-        self._arrangement_label.setText(f"等长帧: {length}")
+        self._arrangement_label.setText(self._format_arrangement_status("equal_frame", length))
 
     def set_header_length(self, length: int):
         """Set header length for header length mode."""
         self._data_model.header_length = length
         # Update hex view
         self._update_hex_views()
+        self._update_toolbar_for_mode("header_length", length)
         # Update status bar
-        self._arrangement_label.setText(f"头长度: {length}")
+        self._arrangement_label.setText(self._format_arrangement_status("header_length", length))
+
+    def set_arrangement_start_offset(self, offset: int):
+        """Set the starting offset used for display and arrangement."""
+        current_hex_view = self._get_current_hex_view()
+        if current_hex_view is None or not hasattr(current_hex_view, "set_start_offset"):
+            return
+
+        current_hex_view.set_start_offset(offset)
+        current_mode = getattr(current_hex_view._model, "_arrangement_mode", "equal_frame")
+        param_value = (
+            getattr(current_hex_view._model, "_header_length", self._data_model.header_length)
+            if current_mode == "header_length"
+            else getattr(current_hex_view._model, "_bytes_per_row", self._data_model.bytes_per_frame)
+        )
+        self._update_toolbar_for_mode(current_mode, param_value)
+        self._refresh_current_view_state()
 
     def set_display_mode(self, mode: str):
         """Set display mode."""
@@ -1367,9 +2424,19 @@ class HexEditorMainWindow(QWidget):
     def show_arrangement_dialog(self):
         """Show arrangement settings dialog."""
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QSpinBox, QDialogButtonBox, QLabel
+        from .dialogs.chrome import create_dialog_header
         dialog = QDialog(self)
         dialog.setWindowTitle("Arrangement Settings")
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        layout.addWidget(
+            create_dialog_header(
+                "Arrangement Settings",
+                "统一配置每行字节数与头长度参数，避免隐藏在旧式临时对话框里的视觉断层。",
+            )
+        )
 
         # Bytes per frame
         bytes_label = QLabel("Bytes per frame:")
@@ -1743,28 +2810,19 @@ class HexEditorMainWindow(QWidget):
             0,
             not self._is_side_panel_visible(self._file_browser, 0),
             "_file_tree_width",
-            250,
+            CHROME.sidebar_width,
         )
 
     def toggle_ai_panel(self):
-        """Toggle the AI side panel from the View menu."""
+        """Toggle the AI workspace column from the View menu."""
         self.set_ai_panel_visible(not self.is_ai_panel_visible())
 
     def focus_ai_panel(self):
-        """Ensure the AI side panel is visible and focused."""
+        """Ensure the AI workspace column is visible and focus its composer."""
         if not self.is_ai_panel_visible():
             self.set_ai_panel_visible(True)
 
-        if self._active_panel_id != "ai":
-            self._active_panel_id = "ai"
-            self._refresh_side_panel_layout()
-            self._save_side_panel_settings()
-
-        if self._panel_layout_mode == "tabs":
-            index = self._panel_tabs.indexOf(self._ai_panel)
-            if index >= 0:
-                self._panel_tabs.setCurrentIndex(index)
-                self._sync_tab_panel_visibility()
+        self._sync_ai_panel_visibility()
 
         if hasattr(self, "_ai_panel_widget"):
             self._ai_panel_widget.focus_input()
@@ -1785,7 +2843,7 @@ class HexEditorMainWindow(QWidget):
         self.set_structure_panel_visible(not self.is_structure_panel_visible())
 
     def set_ai_panel_visible(self, visible: bool):
-        """Enable or disable the AI panel."""
+        """Enable or disable the AI workspace column."""
         self._set_panel_visible("ai", visible)
 
     def set_value_panel_visible(self, visible: bool):
@@ -1804,13 +2862,19 @@ class HexEditorMainWindow(QWidget):
 
         self._capture_right_panel_width()
         self._panel_visibility[panel_id] = visible
+
         active_panel_ids = self._get_active_panel_ids()
-        if panel_id in active_panel_ids:
-            self._active_panel_id = panel_id
+        panel_host_id = {
+            "value": "data",
+            "structure": "structure",
+        }.get(panel_id)
+        if panel_host_id is not None and visible:
+            self._active_panel_id = panel_host_id
         elif self._active_panel_id not in active_panel_ids:
-            self._active_panel_id = active_panel_ids[0] if active_panel_ids else "value"
+            self._active_panel_id = active_panel_ids[0] if active_panel_ids else "data"
 
         self._refresh_side_panel_layout()
+        self._sync_ai_panel_visibility()
         self._sync_right_panel_visibility()
         self._apply_right_panel_width_for_layout()
         self._schedule_right_panel_width_restore()
@@ -2021,23 +3085,82 @@ class HexEditorMainWindow(QWidget):
             s.setValue('ai_cloud_base_url', settings.get('cloud', {}).get('base_url', ''))
             s.setValue('ai_cloud_model', settings.get('cloud', {}).get('model', ''))
             self._ai_manager.configure(settings)
+            if not settings.get("enabled", True):
+                self.set_ai_panel_visible(False)
             if hasattr(self, "_ai_panel_widget"):
                 self._ai_panel_widget.refresh_provider_status()
 
     # Tab management
+    def _find_tab_index_for_document(self, doc: FileHandle) -> int:
+        """Return the first editor tab index for a document, if present."""
+        for index in range(self._tab_widget.count()):
+            widget = self._tab_widget.widget(index)
+            if isinstance(widget, HexEditorTabWidget) and widget.document == doc:
+                return index
+        return -1
+
+    def _sync_current_view_bytes_per_row(self) -> None:
+        """Keep toolbar and status state aligned with the active editor's arrangement."""
+        current_widget = self._tab_widget.currentWidget()
+        if not hasattr(current_widget, 'hex_view'):
+            main_window = self.window()
+            if hasattr(main_window, "_sync_arrangement_toolbar"):
+                mode = self._data_model.arrangement_mode
+                main_window._sync_arrangement_toolbar(
+                    mode=mode,
+                    length_value=self._data_model.header_length if mode == ArrangementMode.HEADER_LENGTH else self._data_model.bytes_per_frame,
+                    length_range=(1, 8) if mode == ArrangementMode.HEADER_LENGTH else (1, 65535),
+                    start_offset=0,
+                    max_start_offset=0,
+                )
+            return
+
+        model = current_widget.hex_view._model
+        arrangement_mode = getattr(model, "_arrangement_mode", "equal_frame")
+        if arrangement_mode == "header_length":
+            header_length = getattr(model, "_header_length", None)
+            self._data_model.arrangement_mode = ArrangementMode.HEADER_LENGTH
+            if isinstance(header_length, int) and header_length > 0:
+                self._data_model.header_length = header_length
+                self._update_toolbar_for_mode("header_length", header_length)
+        else:
+            bytes_per_row = getattr(model, "_bytes_per_row", None)
+            self._data_model.arrangement_mode = ArrangementMode.EQUAL_FRAME
+            if isinstance(bytes_per_row, int) and bytes_per_row > 0:
+                self._data_model.bytes_per_frame = bytes_per_row
+                self._update_toolbar_for_mode("equal_frame", bytes_per_row)
+
     def _add_editor_tab(self, doc: FileHandle):
         """Add editor tab for document."""
+        existing_index = self._find_tab_index_for_document(doc)
+        if existing_index >= 0:
+            self._tab_widget.setCurrentIndex(existing_index)
+            self._update_tab_name(existing_index, doc)
+            self._refresh_current_view_state()
+            self._sync_current_view_bytes_per_row()
+
+            current_widget = self._tab_widget.currentWidget()
+            if hasattr(current_widget, 'hex_view'):
+                current_widget.hex_view.setFocus()
+
+            return existing_index, False
+
         # Create hex view widget
         hex_view_widget = HexEditorTabWidget(doc, self)
         index = self._tab_widget.addTab(hex_view_widget, doc.file_name)
         self._tab_widget.setCurrentIndex(index)
         self._update_tab_name(index, doc)
+        self._refresh_tab_close_buttons()
+        self._update_center_empty_state()
 
         # Connect hex view signals for status bar updates
         hex_view = hex_view_widget.hex_view
         self._connect_hex_view_signals(hex_view)
         hex_view_widget.data_changed.connect(self._refresh_current_view_state)
         self._refresh_current_view_state()
+        self._sync_current_view_bytes_per_row()
+
+        return index, True
 
     def _update_tab_name(self, index: int, doc: FileHandle):
         """Update tab name with modification indicator."""
@@ -2060,11 +3183,17 @@ class HexEditorMainWindow(QWidget):
         # Update arrangement label in status bar
         arrangement_mode = self._data_model.arrangement_mode
         if arrangement_mode == ArrangementMode.EQUAL_FRAME:
-            self._arrangement_label.setText(f"等长帧: {self._data_model.bytes_per_frame}")
+            self._arrangement_label.setText(
+                self._format_arrangement_status("equal_frame", self._data_model.bytes_per_frame)
+            )
         elif arrangement_mode == ArrangementMode.HEADER_LENGTH:
-            self._arrangement_label.setText(f"头长度: {self._data_model.header_length}")
+            self._arrangement_label.setText(
+                self._format_arrangement_status("header_length", self._data_model.header_length)
+            )
         else:
-            self._arrangement_label.setText(f"自定义: {self._data_model.bytes_per_frame}")
+            self._arrangement_label.setText(
+                self._format_arrangement_status("custom", self._data_model.bytes_per_frame)
+            )
 
         for i in range(self._tab_widget.count()):
             widget = self._tab_widget.widget(i)
@@ -2078,31 +3207,44 @@ class HexEditorMainWindow(QWidget):
 
     def _on_close_tab(self, index: int):
         """Handle tab close."""
+        if index < 0:
+            return
+
+        widget = self._tab_widget.widget(index)
+        doc = widget.document if isinstance(widget, HexEditorTabWidget) else None
+
         # Get document before closing to save its settings
-        doc = self._document_model.get_document(index)
         if doc and doc.file_path:
             # Save bytes_per_row setting for this file
-            widget = self._tab_widget.widget(index)
             if hasattr(widget, 'hex_view'):
                 bytes_per_row = widget.hex_view._model._bytes_per_row
                 self._set_file_bytes_per_row(doc.file_path, bytes_per_row)
 
-        if self._document_model.close_document(index):
+        if self._document_model.close_document_handle(doc):
             self._tab_widget.removeTab(index)
+            self._refresh_tab_close_buttons()
+            self._update_center_empty_state()
+            self._sync_current_view_bytes_per_row()
 
     def _on_tab_changed(self, index: int):
         """Handle tab change."""
         if index >= 0:
-            doc = self._document_model.get_document(index)
-            if doc:
-                self._document_model.set_current_document(doc)
-        self._selection_label.setText(tr("status_selection", 0))
+            widget = self._tab_widget.widget(index)
+            if isinstance(widget, HexEditorTabWidget):
+                self._document_model.set_current_document(widget.document)
+        self._selection_label.setText("0 B")
+        self._update_center_empty_state()
         self._refresh_current_view_state()
+        self._sync_current_view_bytes_per_row()
 
     def _on_document_changed(self, doc: FileHandle):
         """Handle document change."""
         if doc:
-            self._size_label.setText(f"Size: {FormatUtils.format_size(doc.file_size)}")
+            self._size_label.setText(FormatUtils.format_size(doc.file_size))
+        else:
+            self._size_label.setText("0 B")
+        self._sync_file_browser_active_file(doc)
+        self._update_document_status_summary(doc)
         self._refresh_current_view_state()
 
     def _on_document_modified(self, doc: FileHandle):
@@ -2114,6 +3256,13 @@ class HexEditorMainWindow(QWidget):
                 if widget.document == doc:
                     self._update_tab_name(i, doc)
                     break
+        self._sync_file_browser_active_file(self._document_model.current_document)
+        self._update_document_status_summary(doc)
+
+    def _sync_file_browser_active_file(self, doc: FileHandle | None) -> None:
+        """Mirror the current document into the explorer's active-file marker."""
+        path = doc.file_path if doc and getattr(doc, "file_path", None) else None
+        self._file_browser.set_active_file(path)
 
 
 class HexEditorTabWidget(QWidget):

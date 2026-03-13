@@ -16,6 +16,7 @@ import PyQt6
 
 from .utils.logger import logger
 from .utils.i18n import set_language
+from .ui.design_system import CHROME, build_application_stylesheet
 
 
 class OpenHexApp(QApplication):
@@ -61,6 +62,7 @@ class OpenHexApp(QApplication):
 
         # Set application palette
         self._set_default_palette()
+        self.setStyleSheet(build_application_stylesheet())
 
         logger.info("openhex application initialized")
 
@@ -83,29 +85,31 @@ class OpenHexApp(QApplication):
 
     def _set_default_font(self):
         """Set default font for the application."""
-        font = QFont("Menlo", 11)  # Monospace for hex editing
+        font = QFont("Segoe UI", 10)
         if sys.platform == "win32":
-            font = QFont("Consolas", 10)
+            font = QFont("Segoe UI", 10)
         elif sys.platform == "darwin":
-            font = QFont("SF Mono", 11)
+            font = QFont("PingFang SC", 12)
+        else:
+            font = QFont("Noto Sans", 10)
         self.setFont(font)
 
     def _set_default_palette(self):
         """Set default color palette."""
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e1e"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#d4d4d4"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#252526"))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#2d2d2d"))
-        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#3c3c3c"))
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#cccccc"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#d4d4d4"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#3c3c3c"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Link, QColor("#3794ff"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#264f78"))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Window, QColor(CHROME.app_bg))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(CHROME.text_primary))
+        palette.setColor(QPalette.ColorRole.Base, QColor(CHROME.surface))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(CHROME.surface_alt))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(CHROME.surface_alt))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(CHROME.text_primary))
+        palette.setColor(QPalette.ColorRole.Text, QColor(CHROME.text_primary))
+        palette.setColor(QPalette.ColorRole.Button, QColor(CHROME.surface_alt))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(CHROME.text_primary))
+        palette.setColor(QPalette.ColorRole.BrightText, QColor(CHROME.text_primary))
+        palette.setColor(QPalette.ColorRole.Link, QColor(CHROME.accent))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(CHROME.accent))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(CHROME.text_primary))
         self.setPalette(palette)
 
     def _load_language(self):

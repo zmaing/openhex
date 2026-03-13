@@ -140,7 +140,7 @@ def main():
         # Test 8: Status bar
         print("\n[9] Status bar...")
         size_label = hex_editor._size_label.text()
-        if log("Size:" in size_label, f"Status bar: {size_label}"):
+        if log(size_label == "0 B", f"Status bar size token: {size_label}"):
             passed += 1
         else:
             failed += 1

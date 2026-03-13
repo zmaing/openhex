@@ -16,6 +16,7 @@ import re
 
 # Import i18n
 from ...utils.i18n import tr as _tr
+from .chrome import create_dialog_header
 
 
 DEBUG_LOG_PATH = Path(__file__).resolve().parents[3] / "logs" / "debug.log"
@@ -43,12 +44,22 @@ class FindReplaceDialog(QDialog):
     def _init_ui(self):
         """Initialize UI."""
         self.setWindowTitle(_tr("dialog_find_replace"))
-        self.resize(500, 400)
+        self.resize(560, 460)
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        layout.addWidget(
+            create_dialog_header(
+                _tr("dialog_find_replace"),
+                "统一处理查找、替换和结果回看，保持和主工作区一致的专业深色视觉层级。",
+            )
+        )
 
         # Search mode tabs
         tabs = QTabWidget()
+        tabs.setDocumentMode(True)
 
         # Find tab
         find_tab = self._create_find_tab()
@@ -78,6 +89,8 @@ class FindReplaceDialog(QDialog):
         """Create find tab."""
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
 
         # Search pattern
         layout.addWidget(QLabel(_tr("label_find")))
@@ -118,6 +131,8 @@ class FindReplaceDialog(QDialog):
         """Create replace tab."""
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
 
         # Search pattern
         layout.addWidget(QLabel(_tr("label_find")))
@@ -160,6 +175,8 @@ class FindReplaceDialog(QDialog):
         """Create results tab."""
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
 
         # Progress
         self._progress = QProgressBar()
@@ -183,6 +200,8 @@ class FindReplaceDialog(QDialog):
         """Create options group."""
         group = QGroupBox(_tr("label_search_mode"))
         layout = QVBoxLayout()
+        layout.setContentsMargins(12, 14, 12, 12)
+        layout.setSpacing(10)
 
         self._search_mode_group = QButtonGroup()
 

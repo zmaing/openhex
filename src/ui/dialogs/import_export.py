@@ -6,8 +6,10 @@ Import/Export Dialog
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QGroupBox, QRadioButton, QButtonGroup,
-                             QTextEdit, QFileDialog)
+                             QTextEdit, QFileDialog, QLineEdit)
 from PyQt6.QtCore import Qt
+
+from .chrome import create_dialog_header
 
 
 class ImportExportDialog(QDialog):
@@ -26,12 +28,29 @@ class ImportExportDialog(QDialog):
         """Initialize UI."""
         if self._mode == "import":
             self.setWindowTitle("Import Data")
-            self.resize(500, 400)
+            self.resize(560, 470)
         else:
             self.setWindowTitle("Export Data")
-            self.resize(500, 400)
+            self.resize(560, 500)
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        if self._mode == "import":
+            layout.addWidget(
+                create_dialog_header(
+                    "Import Data",
+                    "把外部文本或数组格式导入当前缓冲区，并与导出流程共用统一的苹果式弹窗结构。",
+                )
+            )
+        else:
+            layout.addWidget(
+                create_dialog_header(
+                    "Export Data",
+                    "按格式和范围导出当前数据，输出区、参数区和动作区保持一致的层级关系。",
+                )
+            )
 
         if self._mode == "import":
             self._init_import_ui(layout)
@@ -67,6 +86,7 @@ class ImportExportDialog(QDialog):
         # Format selection
         format_group = QGroupBox("Import Format")
         format_layout = QVBoxLayout()
+        format_layout.setSpacing(10)
 
         self._format_group = QButtonGroup()
 
@@ -101,6 +121,7 @@ class ImportExportDialog(QDialog):
         # Format selection
         format_group = QGroupBox("Export Format")
         format_layout = QVBoxLayout()
+        format_layout.setSpacing(10)
 
         self._format_group = QButtonGroup()
 
@@ -127,6 +148,7 @@ class ImportExportDialog(QDialog):
         # Export range
         range_group = QGroupBox("Export Range")
         range_layout = QHBoxLayout()
+        range_layout.setSpacing(8)
 
         range_layout.addWidget(QLabel("Offset:"))
         self._offset_input = QLineEdit("0")

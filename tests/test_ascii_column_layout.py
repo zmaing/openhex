@@ -146,6 +146,50 @@ def test_offset_ruler_labels_only_decade_ticks():
         widget.close()
 
 
+def test_offset_ruler_scale_caption_is_hover_revealed_only():
+    """The left caption should stay out of the way until the ruler is hovered."""
+    OpenHexApp.instance()
+
+    widget = HexViewWidget()
+    widget.resize(900, 320)
+    widget.hex_view.set_bytes_per_row(32)
+    widget.hex_view._model.set_data(bytes(range(64)))
+    widget.show()
+    QTest.qWait(50)
+
+    try:
+        widget._ruler._set_hovered(False)
+        assert not widget._ruler._should_show_scale_caption()
+
+        widget._ruler._set_hovered(True)
+        assert widget._ruler._should_show_scale_caption()
+
+        widget._ruler._set_hovered(False)
+        assert not widget._ruler._should_show_scale_caption()
+    finally:
+        widget.close()
+
+
+def test_offset_ruler_hides_scale_caption_in_tight_widths():
+    """Tight ruler widths should keep the caption collapsed even on hover."""
+    OpenHexApp.instance()
+
+    widget = HexViewWidget()
+    widget.resize(300, 320)
+    widget.hex_view.set_bytes_per_row(32)
+    widget.hex_view._model.set_data(bytes(range(64)))
+    widget.show()
+    QTest.qWait(50)
+
+    try:
+        widget._ruler.resize(280, widget._ruler.height())
+        widget._ruler._set_hovered(True)
+
+        assert not widget._ruler._should_show_scale_caption()
+    finally:
+        widget.close()
+
+
 def test_horizontal_scrollbar_moves_shared_byte_window():
     """Long rows should scroll hex and ASCII together via one shared scrollbar."""
     OpenHexApp.instance()

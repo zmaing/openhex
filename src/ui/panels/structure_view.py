@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 
 from PyQt6.QtCore import Qt, QSettings
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -34,6 +33,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.parser.c_struct import CStructDefinition, decode_c_struct, parse_c_struct_definition
 from ...utils.i18n import tr
+from ..design_system import CHROME, MONO_FONT_FAMILY, build_mono_font, input_surface_qss, panel_surface_qss, table_surface_qss
 
 
 class NewStructureConfigDialog(QDialog):
@@ -69,16 +69,19 @@ class NewStructureConfigDialog(QDialog):
         self._definition_edit = QPlainTextEdit()
         self._definition_edit.setPlaceholderText(tr("panel_structure_definition_placeholder"))
         self._definition_edit.setPlainText(self._initial_definition)
-        self._definition_edit.setStyleSheet(
-            """
-            QPlainTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #3c3c3c;
-                font-family: 'Menlo', 'Consolas', monospace;
-            }
-            """
-        )
+        self._definition_edit.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: {CHROME.surface_alt};
+                color: {CHROME.text_primary};
+                border: 1px solid {CHROME.border};
+                border-radius: 12px;
+                font-family: {MONO_FONT_FAMILY};
+                padding: 8px 10px;
+            }}
+            QPlainTextEdit:focus {{
+                border-color: {CHROME.accent};
+            }}
+        """)
         layout.addWidget(self._definition_edit, 1)
 
         buttons = QDialogButtonBox(
@@ -127,15 +130,22 @@ class StructureConfigManagerDialog(QDialog):
         self._config_list = QListWidget()
         self._config_list.itemDoubleClicked.connect(self._on_edit_clicked)
         self._config_list.currentItemChanged.connect(self._on_selection_changed)
-        self._config_list.setStyleSheet(
-            """
-            QListWidget {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #3c3c3c;
-            }
-            """
-        )
+        self._config_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {CHROME.surface_alt};
+                color: {CHROME.text_primary};
+                border: 1px solid {CHROME.border};
+                border-radius: 12px;
+                padding: 6px;
+            }}
+            QListWidget::item {{
+                border-radius: 8px;
+                padding: 8px 10px;
+            }}
+            QListWidget::item:selected {{
+                background-color: {CHROME.accent_surface};
+            }}
+        """)
         layout.addWidget(self._config_list, 1)
 
         button_row = QHBoxLayout()
@@ -270,8 +280,7 @@ class StructureViewPanel(QWidget):
         self._current_row_offset = 0
         self._current_row_data = b""
         self._display_base = "hex"
-        self._value_font = QFont("Menlo", 10)
-        self._value_font.setStyleHint(QFont.StyleHint.Monospace)
+        self._value_font = build_mono_font(10)
         self._init_ui()
         self._load_configs()
         self._refresh_config_combo()
@@ -280,60 +289,90 @@ class StructureViewPanel(QWidget):
     def _init_ui(self):
         """Initialize panel UI."""
         self.setObjectName("structureViewPanel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
-            """
-            QWidget#structureViewPanel {
-                background-color: #252526;
-                color: #cccccc;
-            }
-            QWidget#structureViewPanel QLabel {
-                background-color: transparent;
-                color: #cccccc;
+            panel_surface_qss("QWidget#structureViewPanel")
+            + input_surface_qss("QWidget#structureViewPanel")
+            + table_surface_qss("QWidget#structureViewPanel")
+            + f"""
+            QWidget#structureViewPanel {{
+                background: transparent;
                 border: none;
-            }
-            QWidget#structureViewPanel QComboBox,
-            QWidget#structureViewPanel QLineEdit {
-                background-color: #2d2d30;
-                color: #cccccc;
-                border: 1px solid #3c3c3c;
-                padding: 4px 6px;
-            }
-            QWidget#structureViewPanel QComboBox::drop-down {
+            }}
+            QLabel#structureSectionLabel {{
+                color: {CHROME.text_muted};
+                font-size: 9px;
+                font-weight: 700;
+            }}
+            QLabel#structureMetricValue {{
+                color: {CHROME.text_primary};
+                background: transparent;
                 border: none;
-            }
-            QWidget#structureViewPanel QRadioButton {
-                color: #cccccc;
+                padding: 0;
+            }}
+            QFrame#structureSummaryCard {{
+                background-color: {CHROME.surface_alt};
+                border: 1px solid {CHROME.border};
+                border-radius: 10px;
+            }}
+            QFrame#structureMetricBlock {{
+                background: transparent;
+                border: none;
+            }}
+            QWidget#structureViewPanel QRadioButton {{
+                color: {CHROME.text_secondary};
                 spacing: 6px;
-            }
-            QWidget#structureViewPanel QRadioButton::indicator {
-                width: 14px;
-                height: 14px;
-            }
+                font-weight: 600;
+            }}
+            QWidget#structureViewPanel QRadioButton::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 8px;
+                border: 1px solid {CHROME.border_strong};
+                background-color: {CHROME.surface};
+            }}
+            QWidget#structureViewPanel QRadioButton::indicator:checked {{
+                background-color: {CHROME.accent};
+                border-color: {CHROME.accent};
+            }}
             """
         )
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(10)
 
-        title = QLabel(tr("panel_structure_title"))
-        title.setStyleSheet("font-weight: bold; color: #cccccc;")
-        layout.addWidget(title)
+        summary_card = QFrame(self)
+        summary_card.setObjectName("structureSummaryCard")
+        summary_layout = QHBoxLayout()
+        summary_layout.setContentsMargins(12, 10, 12, 10)
+        summary_layout.setSpacing(16)
 
-        offset_row = QHBoxLayout()
-        offset_row.setContentsMargins(0, 0, 0, 0)
-        offset_row.setSpacing(6)
-        offset_row.addWidget(QLabel(tr("panel_structure_offset")))
+        offset_block = QFrame(summary_card)
+        offset_block.setObjectName("structureMetricBlock")
+        offset_layout = QVBoxLayout(offset_block)
+        offset_layout.setContentsMargins(0, 0, 0, 0)
+        offset_layout.setSpacing(4)
+        offset_label = QLabel(tr("panel_structure_offset"))
+        offset_label.setObjectName("structureSectionLabel")
+        offset_layout.addWidget(offset_label)
         self._offset_value = QLabel("0x00000000")
+        self._offset_value.setObjectName("structureMetricValue")
         self._offset_value.setFont(self._value_font)
-        offset_row.addWidget(self._offset_value)
-        offset_row.addStretch()
-        layout.addLayout(offset_row)
+        offset_layout.addWidget(self._offset_value)
+        summary_layout.addWidget(offset_block, 0, Qt.AlignmentFlag.AlignTop)
 
+        display_block = QFrame(summary_card)
+        display_block.setObjectName("structureMetricBlock")
+        display_layout = QVBoxLayout(display_block)
+        display_layout.setContentsMargins(0, 0, 0, 0)
+        display_layout.setSpacing(4)
+        display_label = QLabel(tr("panel_structure_display"))
+        display_label.setObjectName("structureSectionLabel")
+        display_layout.addWidget(display_label)
         display_row = QHBoxLayout()
         display_row.setContentsMargins(0, 0, 0, 0)
         display_row.setSpacing(8)
-        display_row.addWidget(QLabel(tr("panel_structure_display")))
         self._hex_radio = QRadioButton(tr("panel_structure_hex"))
         self._decimal_radio = QRadioButton(tr("panel_structure_decimal"))
         self._display_group = QButtonGroup(self)
@@ -346,7 +385,19 @@ class StructureViewPanel(QWidget):
         display_row.addWidget(self._hex_radio)
         display_row.addWidget(self._decimal_radio)
         display_row.addStretch()
-        layout.addLayout(display_row)
+        display_layout.addLayout(display_row)
+        summary_layout.addWidget(display_block, 1, Qt.AlignmentFlag.AlignTop)
+
+        summary_card.setLayout(summary_layout)
+        layout.addWidget(summary_card)
+
+        config_row = QHBoxLayout()
+        config_row.setContentsMargins(2, 0, 2, 0)
+        config_row.setSpacing(8)
+        self._config_combo = QComboBox()
+        self._config_combo.activated.connect(self._on_config_activated)
+        config_row.addWidget(self._config_combo, 1)
+        layout.addLayout(config_row)
 
         self._table = QTableWidget(0, 2, self)
         self._table.setHorizontalHeaderLabels(
@@ -358,41 +409,10 @@ class StructureViewPanel(QWidget):
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._table.setShowGrid(False)
-        self._table.setStyleSheet(
-            """
-            QTableWidget {
-                background-color: #252526;
-                color: #cccccc;
-                alternate-background-color: #2d2d30;
-                border: 1px solid #3c3c3c;
-            }
-            QHeaderView::section {
-                background-color: #2d2d30;
-                color: #cccccc;
-                padding: 4px 6px;
-                border: none;
-                border-bottom: 1px solid #3c3c3c;
-            }
-            """
-        )
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._table, 1)
-
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("color: #3c3c3c;")
-        layout.addWidget(divider)
-
-        config_row = QHBoxLayout()
-        config_row.setContentsMargins(0, 0, 0, 0)
-        config_row.setSpacing(8)
-        config_row.addWidget(QLabel(tr("panel_structure_config")))
-        self._config_combo = QComboBox()
-        self._config_combo.activated.connect(self._on_config_activated)
-        config_row.addWidget(self._config_combo, 1)
-        layout.addLayout(config_row)
 
         self.setLayout(layout)
 
@@ -567,7 +587,7 @@ class StructureViewPanel(QWidget):
         for row, (field, value) in enumerate(rows):
             self._set_table_item(row, 0, field.display_name)
             self._set_table_item(row, 1, value)
-            self._table.setRowHeight(row, 24)
+            self._table.setRowHeight(row, CHROME.row_height)
 
     def add_config(self, name: str, definition: str):
         """Add a new parsing config and make it active."""

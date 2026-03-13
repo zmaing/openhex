@@ -8,10 +8,12 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QComboBox, QProgressBar, QCheckBox,
                              QGroupBox, QTextEdit)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
-from PyQt6.QtGui import QFont
 
 import hashlib
 import zlib
+
+from .chrome import create_dialog_header
+from ..design_system import build_mono_font
 
 
 class ChecksumWorker(QThread):
@@ -68,13 +70,23 @@ class ChecksumDialog(QDialog):
     def _init_ui(self):
         """Initialize UI."""
         self.setWindowTitle("Calculate Checksum")
-        self.resize(500, 400)
+        self.resize(560, 470)
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        layout.addWidget(
+            create_dialog_header(
+                "Calculate Checksum",
+                "统一展示文件摘要算法、进度反馈和结果输出，减少传统工具弹窗的割裂感。",
+            )
+        )
 
         # File info
         info_group = QGroupBox("File Information")
         info_layout = QVBoxLayout()
+        info_layout.setSpacing(8)
 
         if self._file_path:
             from pathlib import Path
@@ -90,6 +102,7 @@ class ChecksumDialog(QDialog):
         # Algorithm selection
         algo_group = QGroupBox("Algorithms")
         algo_layout = QVBoxLayout()
+        algo_layout.setSpacing(8)
 
         self._md5_check = QCheckBox("MD5")
         self._md5_check.setChecked(True)
@@ -121,7 +134,7 @@ class ChecksumDialog(QDialog):
         # Results
         self._results_text = QTextEdit()
         self._results_text.setReadOnly(True)
-        self._results_text.setFont(QFont("Monospace", 10))
+        self._results_text.setFont(build_mono_font(10))
         layout.addWidget(self._results_text)
 
         # Buttons

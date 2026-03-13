@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QButtonGroup, QCheckBox, QSpinBox, QComboBox)
 from PyQt6.QtCore import Qt
 
+from .chrome import create_dialog_header
+
 
 class BatchEditDialog(QDialog):
     """
@@ -26,13 +28,23 @@ class BatchEditDialog(QDialog):
     def _init_ui(self):
         """Initialize UI."""
         self.setWindowTitle("Batch Edit")
-        self.resize(450, 350)
+        self.resize(520, 430)
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        layout.addWidget(
+            create_dialog_header(
+                "Batch Edit",
+                "在一个弹窗里完成填充、递增、递减和反转操作，并让参数区与动作区保持统一卡片层级。",
+            )
+        )
 
         # Selection info
         info_group = QGroupBox("Selection")
         info_layout = QVBoxLayout()
+        info_layout.setSpacing(8)
 
         self._offset_label = QLabel(f"Offset: 0x{self._offset:08X}")
         info_layout.addWidget(self._offset_label)
@@ -46,6 +58,7 @@ class BatchEditDialog(QDialog):
         # Operation type
         op_group = QGroupBox("Operation")
         op_layout = QVBoxLayout()
+        op_layout.setSpacing(10)
 
         self._op_group = QButtonGroup()
 
@@ -76,6 +89,7 @@ class BatchEditDialog(QDialog):
         # Fill options
         self._fill_group = QGroupBox("Fill Options")
         fill_options_layout = QVBoxLayout()
+        fill_options_layout.setSpacing(10)
 
         hex_layout = QHBoxLayout()
         hex_layout.addWidget(QLabel("Hex:"))
@@ -108,6 +122,7 @@ class BatchEditDialog(QDialog):
         # Increment/Decrement options
         self._num_group = QGroupBox("Number Options")
         num_layout = QVBoxLayout()
+        num_layout.setSpacing(10)
 
         signed_layout = QHBoxLayout()
         signed_layout.addWidget(QLabel("Type:"))

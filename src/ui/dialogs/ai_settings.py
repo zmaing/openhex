@@ -10,6 +10,9 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QFormLayout, QDialogButtonBox, QTextEdit)
 from PyQt6.QtCore import Qt, pyqtSignal
 
+from .chrome import create_dialog_header
+from ..design_system import CHROME, status_label_qss
+
 
 class AISettingsDialog(QDialog):
     """
@@ -67,12 +70,23 @@ class AISettingsDialog(QDialog):
     def _init_ui(self):
         """Initialize UI."""
         self.setWindowTitle("AI Settings")
-        self.resize(550, 450)
+        self.resize(620, 520)
+        self.setObjectName("aiSettingsDialog")
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        layout.addWidget(
+            create_dialog_header(
+                "AI Settings",
+                "统一管理本地模型、云端提供商和默认推理参数，让 AI 面板与菜单动作共用同一套配置。",
+            )
+        )
 
         # Tab widget
         tabs = QTabWidget()
+        tabs.setDocumentMode(True)
 
         # General tab
         general_tab = self._create_general_tab()
@@ -103,6 +117,8 @@ class AISettingsDialog(QDialog):
         """Create general settings tab."""
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
 
         # Enable AI
         self._enable_ai = QCheckBox("Enable AI features")
@@ -111,6 +127,10 @@ class AISettingsDialog(QDialog):
 
         # Provider selection
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
 
         self._provider_combo = QComboBox()
         self._provider_combo.addItems([label for _, label in self.GENERAL_PROVIDER_OPTIONS])
@@ -151,6 +171,11 @@ Cloud API:
         """Create local settings tab."""
         widget = QWidget()
         layout = QFormLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        layout.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(10)
 
         # Endpoint
         self._local_endpoint = QLineEdit(
@@ -205,6 +230,7 @@ Cloud API:
 
         # Result label
         self._local_test_result = QLabel("")
+        self._local_test_result.setStyleSheet(f"color: {CHROME.text_muted}; font-weight: 600;")
         layout.addRow("Status:", self._local_test_result)
 
         layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
@@ -215,6 +241,11 @@ Cloud API:
         """Create cloud settings tab."""
         widget = QWidget()
         layout = QFormLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        layout.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(10)
 
         # Provider selection
         self._cloud_provider = QComboBox()
@@ -278,13 +309,13 @@ Cloud API:
                 response = client.get(f"{endpoint}/api/tags")
                 if response.status_code == 200:
                     self._local_test_result.setText("✓ Connected!")
-                    self._local_test_result.setStyleSheet("color: #4ec9b0;")
+                    self._local_test_result.setStyleSheet(status_label_qss(CHROME.success))
                 else:
                     self._local_test_result.setText(f"✗ Error: {response.status_code}")
-                    self._local_test_result.setStyleSheet("color: #f14c4c;")
+                    self._local_test_result.setStyleSheet(status_label_qss(CHROME.danger))
         except Exception as e:
             self._local_test_result.setText(f"✗ {str(e)[:30]}")
-            self._local_test_result.setStyleSheet("color: #f14c4c;")
+            self._local_test_result.setStyleSheet(status_label_qss(CHROME.danger))
 
     def _on_ok(self):
         """Handle OK button."""

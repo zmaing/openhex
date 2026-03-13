@@ -9,10 +9,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.app import OpenHexApp
 from src.ui.panels.data_value import (
+    DataValuePanel,
     decode_data_values,
     decode_display_values,
     format_char,
+    format_unix_time,
 )
 
 
@@ -55,6 +58,8 @@ def test_decode_display_values_selects_only_one_active_endian():
     assert big_rows["uint16"][2] == str(int.from_bytes(data[:2], "big"))
     assert little_rows["uint32"][2] == str(int.from_bytes(data, "little"))
     assert big_rows["uint32"][2] == str(int.from_bytes(data, "big"))
+    assert little_rows["time"][2] == format_unix_time(int.from_bytes(data, "little"))
+    assert big_rows["time"][2] == format_unix_time(int.from_bytes(data, "big"))
 
 
 def test_decode_data_values_handles_float_values_and_short_reads():
@@ -72,3 +77,29 @@ def test_format_char_escapes_non_printable_and_quote_characters():
     assert format_char(0x00) == "\\x00"
     assert format_char(ord("'")) == "'\\''"
     assert format_char(ord("\\")) == "'\\\\'"
+
+
+def test_data_value_panel_uses_mutually_exclusive_endian_radios():
+    """The panel should expose explicit little/big endian radio choices."""
+    app = OpenHexApp.instance()
+    panel = DataValuePanel()
+
+    try:
+        panel.update_values(0, bytes.fromhex("23 21 2F 75"))
+        app.processEvents()
+
+        assert panel._little_endian_radio.isChecked()
+        assert not panel._big_endian_radio.isChecked()
+        assert panel._value_table.horizontalHeaderItem(2).text() == "Value (LE)"
+
+        panel._big_endian_radio.click()
+        app.processEvents()
+
+        assert not panel._little_endian_radio.isChecked()
+        assert panel._big_endian_radio.isChecked()
+        assert panel._value_table.horizontalHeaderItem(2).text() == "Value (BE)"
+        assert panel._value_table.item(panel.get_row("uint16"), 2).text() == str(
+            int.from_bytes(bytes.fromhex("23 21"), "big")
+        )
+    finally:
+        panel.deleteLater()

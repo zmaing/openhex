@@ -63,7 +63,7 @@ class OpenHexTester:
 
         print(f"  Found menus: {menu_titles}")
 
-        expected_menus = ["&File", "&Edit", "&View", "&Go", "&Tools", "&AI", "Preferences", "&Help"]
+        expected_menus = ["&File", "&Edit", "&View", "Preferences", "&Help"]
         for menu in expected_menus:
             found = any(menu.replace("&", "") in t.replace("&", "") for t in menu_titles)
             self.log(found, f"Menu '{menu}' exists")

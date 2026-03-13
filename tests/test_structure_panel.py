@@ -24,7 +24,7 @@ from src.utils.i18n import get_language, set_language
 
 
 def test_structure_panel_toggle_and_parse_current_row():
-    """The structure panel should decode the current row using a saved config."""
+    """The structure panel should be toggleable and decode the current row."""
     app = OpenHexApp.instance()
     settings = app.settings
     previous_language = get_language()
@@ -55,15 +55,20 @@ def test_structure_panel_toggle_and_parse_current_row():
 
         assert not structure_action.isChecked()
         assert not editor.is_structure_panel_visible()
+        assert editor._get_active_panel_ids() == ["data"]
 
         structure_action.trigger()
         app.processEvents()
 
         assert structure_action.isChecked()
         assert editor.is_structure_panel_visible()
-        assert editor._panel_tabs.count() == 3
-        tab_titles = [editor._panel_tabs.tabText(i).lower() for i in range(editor._panel_tabs.count())]
-        assert "structure" in tab_titles
+        assert editor._get_active_panel_ids() == ["data", "structure"]
+        assert not editor._right_panel_switcher.isHidden()
+        assert editor._right_panel_tab_bar.count() == 2
+        assert editor._active_panel_id == "structure"
+        assert editor._right_panel_stack.currentWidget() is editor._side_panel_hosts["structure"]
+        tab_titles = [editor._right_panel_tab_bar.tabText(i).lower() for i in range(editor._right_panel_tab_bar.count())]
+        assert any("struct" in title for title in tab_titles)
 
         panel = editor._structure_panel
         assert panel._config_combo.itemData(0) == "__new__"
