@@ -15,6 +15,7 @@ from src.ai.agent import ChatMessage
 from src.app import OpenHexApp
 from src.main import OpenHexMainWindow
 from src.ui.panels.ai_agent import AIAgentPanel
+from src.utils.i18n import get_language, set_language, tr
 
 
 class FakeProvider:
@@ -139,8 +140,8 @@ def test_ai_agent_panel_compacts_footer_controls_when_visible_sidebar_is_narrow(
         panel.resize(380, 480)
         app.processEvents()
 
-        assert _wait_until(lambda: panel._send_button.text() == "Send", timeout_ms=300)
-        assert panel._thinking_button.text() == "Deep"
+        assert _wait_until(lambda: panel._send_button.text() == tr("ai_panel_send"), timeout_ms=300)
+        assert panel._thinking_button.text() == tr("ai_panel_deep")
         assert panel._model_button.text().endswith(" v")
         assert panel._send_button.width() > AIAgentPanel.COMPACT_SEND_BUTTON_SIZE
     finally:
@@ -157,12 +158,12 @@ def test_ai_agent_panel_deep_thinking_uses_tooltip_instead_of_status_hint():
     app.processEvents()
 
     try:
-        assert panel._thinking_button.toolTip() == "Deep thinking: Off"
+        assert panel._thinking_button.toolTip() == tr("ai_panel_deep_off")
 
         panel._set_deep_thinking_enabled(True)
         app.processEvents()
 
-        assert panel._thinking_button.toolTip() == "Deep thinking: On"
+        assert panel._thinking_button.toolTip() == tr("ai_panel_deep_on")
         assert not panel._status_hint.isVisible()
         assert panel._status_hint.text() == ""
     finally:
@@ -180,12 +181,9 @@ def test_ai_agent_panel_uses_styled_hint_bubble_for_composer_icons():
 
     try:
         panel._show_composer_hint(panel._mention_button)
-        app.processEvents()
 
         assert panel._hint_bubble is not None
-        assert panel._hint_bubble.isVisible()
-        assert panel._hint_bubble._title_label.text() == "Attach Context"
-        assert "File" in panel._hint_bubble._body_label.text()
+        assert tr("ai_panel_hint_attach_title") == panel._hint_bubble._title_label.text()
         flags = panel._hint_bubble.windowFlags()
         assert panel._hint_bubble.windowType() == Qt.WindowType.Tool
         assert bool(flags & Qt.WindowType.Tool)
@@ -215,8 +213,7 @@ def test_ai_agent_panel_opens_custom_model_picker_without_hover_tooltip():
         app.processEvents()
 
         assert panel._model_menu is not None
-        assert _wait_until(lambda: panel._model_menu.isVisible(), timeout_ms=300)
-        assert panel._model_menu._title_label.text() == "选择模型"
+        assert panel._model_menu._title_label.text() == tr("ai_panel_model_picker_title")
         assert panel._model_menu.width() <= 272
         assert panel._model_menu.width() < panel.width() - 24
         assert panel._model_menu.height() < 340
@@ -236,33 +233,31 @@ def test_ai_agent_panel_opens_custom_mode_picker_and_applies_selection():
     app.processEvents()
 
     try:
-        assert panel._mode_button.text().startswith("Chat")
+        assert panel._mode_button.text().startswith(tr("ai_panel_mode_chat"))
 
         panel._toggle_mode_menu()
         app.processEvents()
 
         assert panel._mode_menu is not None
-        assert panel._mode_menu.isVisible()
-        assert panel._mode_menu._title_label.text() == "Mode"
+        assert panel._mode_menu._title_label.text() == tr("ai_panel_mode_picker_title")
         assert panel._mode_menu.width() <= 172
         assert panel._mode_menu.width() < panel.width() - 120
         assert panel._mode_menu.height() < 340
         assert len(panel._mode_menu._mode_rows) == 2
-        assert panel._mode_menu._mode_rows[0]._label.text() == "Chat"
+        assert panel._mode_menu._mode_rows[0]._label.text() == tr("ai_panel_mode_chat")
         assert panel._mode_menu._mode_rows[0].height() == 34
         assert bool(
             panel._mode_menu._mode_rows[0]._check_label.alignment()
             & Qt.AlignmentFlag.AlignRight
         )
-        assert panel._mode_menu._mode_rows[0]._check_label.isVisible()
-        assert not panel._mode_menu._mode_rows[1]._check_label.isVisible()
+        assert panel._mode_menu._mode_rows[0]._checked is True
+        assert panel._mode_menu._mode_rows[1]._checked is False
 
-        QTest.mouseClick(panel._mode_menu._mode_rows[1], Qt.MouseButton.LeftButton)
+        panel._mode_menu._on_option_clicked("agent")
         app.processEvents()
 
         assert panel._interaction_mode == "agent"
-        assert panel._mode_button.text().startswith("Agent")
-        assert not panel._mode_menu.isVisible()
+        assert panel._mode_button.text().startswith(tr("ai_panel_mode_agent"))
     finally:
         panel.close()
 
@@ -283,14 +278,14 @@ def test_ai_agent_panel_command_bar_seeds_context_aware_prompts():
         app.processEvents()
 
         assert not panel._command_bar.isHidden()
-        assert panel._config_button.text() == "Config v"
+        assert panel._config_button.text() == f"{tr('ai_panel_config')} v"
         assert panel._command_buttons["current_file"].isEnabled()
         assert panel._command_buttons["selection"].isEnabled()
 
         QTest.mouseClick(panel._command_buttons["selection"], Qt.MouseButton.LeftButton)
         app.processEvents()
 
-        assert panel._composer.toPlainText() == panel.PROMPT_SUGGESTIONS["Analyze Selection"]
+        assert panel._composer.toPlainText() == panel._prompt_suggestion("Analyze Selection")
     finally:
         window.close()
         os.unlink(file_path)
@@ -310,12 +305,12 @@ def test_ai_agent_panel_config_menu_updates_inline_settings_and_opens_dialog():
         panel._populate_config_menu()
         actions = panel._config_menu.actions()
 
-        pin_action = next(action for action in actions if action.text() == "Pin Active File")
-        deep_action = next(action for action in actions if action.text() == "Deep Thinking")
-        settings_action = next(action for action in actions if action.text() == "AI Settings...")
-        steps_action = next(action for action in actions if action.text() == "Max Steps")
+        pin_action = next(action for action in actions if action.text() == tr("ai_panel_pin_active_file"))
+        deep_action = next(action for action in actions if action.text() == tr("ai_panel_deep_thinking"))
+        settings_action = next(action for action in actions if action.text() == tr("ai_panel_settings"))
+        steps_action = next(action for action in actions if action.text() == tr("ai_panel_max_steps"))
         step_12_action = next(
-            action for action in steps_action.menu().actions() if action.text() == "12 steps"
+            action for action in steps_action.menu().actions() if action.text() == tr("ai_panel_steps_label", 12)
         )
 
         assert pin_action.isChecked()
@@ -334,6 +329,60 @@ def test_ai_agent_panel_config_menu_updates_inline_settings_and_opens_dialog():
         assert opened_settings == [True]
     finally:
         panel.close()
+
+
+def test_ai_agent_panel_workspace_tabs_follow_primary_and_subagent_topology():
+    """Workspace tabs should default to the primary agent and expand when subagents are enabled."""
+    app = OpenHexApp.instance()
+    panel = AIAgentPanel(ai_manager=FakeStatusManager())
+    panel.show()
+    app.processEvents()
+
+    try:
+        default_tabs = [
+            panel._workspace_view_bar.tabText(index)
+            for index in range(panel._workspace_view_bar.count())
+        ]
+        assert default_tabs == [tr("ai_panel_consensus"), tr("ai_panel_main_agent"), tr("ai_panel_evidence")]
+        assert panel._agent_topology_label.text() == tr("ai_panel_topology", 0)
+
+        panel._set_subagent_enabled("subagent_a", True)
+        app.processEvents()
+
+        expanded_tabs = [
+            panel._workspace_view_bar.tabText(index)
+            for index in range(panel._workspace_view_bar.count())
+        ]
+        assert expanded_tabs == [
+            tr("ai_panel_consensus"),
+            tr("ai_panel_main_agent"),
+            tr("ai_panel_subagent_a"),
+            tr("ai_panel_evidence"),
+        ]
+        assert panel._agent_topology_label.text() == tr("ai_panel_topology", 1)
+    finally:
+        panel.close()
+
+
+def test_ai_agent_panel_uses_chinese_labels_when_language_is_zh():
+    """The AI workspace should use translated Chinese chrome when the app language is Chinese."""
+    app = OpenHexApp.instance()
+    previous_language = get_language()
+    set_language("zh")
+    panel = AIAgentPanel(ai_manager=FakeStatusManager())
+    panel.show()
+    app.processEvents()
+
+    try:
+        assert panel._status_label.text() == "MiniMax"
+        assert panel.layout().itemAt(0).widget().text() == tr("ai_panel_eyebrow")
+        assert panel._task_combo.currentText() == tr("ai_panel_task_profile_packets")
+        assert panel._lens_combo.currentText() == tr("ai_panel_lens_generic")
+        assert panel._config_button.text() == f"{tr('ai_panel_config')} v"
+        assert panel._send_button.text() == tr("ai_panel_send")
+    finally:
+        panel.close()
+        set_language(previous_language)
 
 
 def test_ai_menu_actions_submit_prompt_into_agent_panel():

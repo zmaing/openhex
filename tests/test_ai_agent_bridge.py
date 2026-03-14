@@ -129,3 +129,114 @@ def test_agent_bridge_returns_structured_errors_without_open_file():
         assert result.data["error"]
     finally:
         window.close()
+
+
+def test_agent_bridge_exposes_packetization_and_packet_reads():
+    """Packet tools should expose equal-frame packet context, descriptors, and packet bytes."""
+    app = OpenHexApp.instance()
+    file_path = _write_temp_file(bytes(range(12)))
+    window = OpenHexMainWindow()
+    app.processEvents()
+
+    try:
+        editor = window._hex_editor
+        bridge = editor._agent_bridge
+
+        editor.open_file(file_path)
+        editor.set_arrangement_length(4)
+        editor.set_arrangement_start_offset(0)
+        QTest.qWait(20)
+
+        context_result = bridge.invoke_tool(ToolInvocation(name="get_packetization_context"))
+        assert context_result.success
+        assert context_result.data["mode"] == "equal_frame"
+        assert context_result.data["bytes_per_packet"] == 4
+        assert context_result.data["packet_count"] == 3
+
+        list_result = bridge.invoke_tool(
+            ToolInvocation(name="list_packets", arguments={"start_index": 1, "limit": 2})
+        )
+        assert list_result.success
+        assert list_result.data["packet_count"] == 3
+        assert list_result.data["returned_count"] == 2
+        assert list_result.data["packets"][0]["index"] == 1
+        assert list_result.data["packets"][0]["offset"] == 4
+
+        packet_result = bridge.invoke_tool(
+            ToolInvocation(name="read_packet", arguments={"packet_index": 1})
+        )
+        assert packet_result.success
+        assert packet_result.data["packet"]["index"] == 1
+        assert packet_result.data["packet"]["total_length"] == 4
+        assert packet_result.data["payload_hex"] == "04 05 06 07"
+    finally:
+        window.close()
+        os.unlink(file_path)
+
+
+def test_agent_bridge_summarizes_field_stats_and_correlations_for_packets():
+    """Packet evidence tools should summarize decoded field statistics and correlations."""
+    app = OpenHexApp.instance()
+    file_path = _write_temp_file(
+        bytes(
+            [
+                0x01, 0xAA, 0x10, 0x10,
+                0x02, 0xAA, 0x20, 0x20,
+                0x03, 0xAA, 0x30, 0x30,
+                0x04, 0xAA, 0x40, 0x40,
+            ]
+        )
+    )
+    window = OpenHexMainWindow()
+    app.processEvents()
+
+    try:
+        editor = window._hex_editor
+        bridge = editor._agent_bridge
+        panel = editor._structure_panel
+        panel.add_config(
+            "PacketStat",
+            """
+            typedef struct {
+                uint8_t counter;
+                uint8_t type;
+                uint8_t value;
+                uint8_t mirror;
+            } PacketStat;
+            """,
+        )
+
+        editor.open_file(file_path)
+        editor.set_arrangement_length(4)
+        QTest.qWait(20)
+
+        stats_result = bridge.invoke_tool(
+            ToolInvocation(
+                name="summarize_field_stats",
+                arguments={"config_name": "PacketStat", "sample_count": 4},
+            )
+        )
+        assert stats_result.success
+        stats_by_name = {
+            entry["field_name"]: entry
+            for entry in stats_result.data["field_stats"]
+        }
+        assert stats_by_name["counter"]["sample_count"] == 4
+        assert stats_by_name["counter"]["unique_count"] == 4
+        assert stats_by_name["type"]["unique_count"] == 1
+
+        correlation_result = bridge.invoke_tool(
+            ToolInvocation(
+                name="find_field_correlations",
+                arguments={"config_name": "PacketStat", "sample_count": 4},
+            )
+        )
+        assert correlation_result.success
+        assert any(
+            entry["field_name"] == "counter"
+            and entry["type"] in {"monotonic_counter", "correlates_with_packet_index"}
+            for entry in correlation_result.data["correlations"]
+        )
+    finally:
+        window.close()
+        os.unlink(file_path)

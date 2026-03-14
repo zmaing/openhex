@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QFrame, QLabel, QPushButton, QWidget, QTabBar, QSize
 
 from src.app import OpenHexApp
 from src.main import OpenHexMainWindow
+from src.ui.panels.structure_view import StructureConfigManagerDialog
 from src.utils.i18n import tr
 
 
@@ -233,6 +234,41 @@ def test_side_panel_switcher_stays_hidden_with_single_value_panel():
         assert editor._get_active_panel_ids() == ["data"]
         assert editor._active_panel_id == "data"
     finally:
+        window.close()
+
+
+def test_structure_manager_dialog_uses_shared_dialog_chrome():
+    """The structure manager should render with the shared dark shell and consistent action buttons."""
+    app = OpenHexApp.instance()
+    window = OpenHexMainWindow()
+    app.processEvents()
+    dialog = None
+
+    try:
+        dialog = StructureConfigManagerDialog(window._hex_editor._structure_panel, window)
+        dialog.show()
+        QTest.qWait(50)
+        app.processEvents()
+
+        assert dialog.objectName() == "structureConfigManagerDialog"
+        assert dialog.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        assert dialog._config_list.objectName() == "structureConfigList"
+        assert dialog._edit_button.objectName() == "structureSecondaryButton"
+        assert dialog._delete_button.objectName() == "structureDangerButton"
+        assert dialog._close_button.objectName() == "structurePrimaryButton"
+        assert dialog.findChild(QFrame, "dialogHeaderCard") is None
+        assert dialog._edit_button.minimumWidth() == dialog._delete_button.minimumWidth() == 96
+        assert dialog._close_button.minimumWidth() == 102
+        assert dialog._edit_button.height() == dialog._delete_button.height() == dialog._close_button.height()
+        assert dialog._edit_button.height() >= 28
+        assert dialog._count_badge.text() == "0"
+
+        image = dialog.grab().toImage()
+        corner = image.pixelColor(4, 4)
+        assert max(corner.red(), corner.green(), corner.blue()) < 48
+    finally:
+        if dialog is not None:
+            dialog.close()
         window.close()
 
 

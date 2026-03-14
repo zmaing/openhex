@@ -14,6 +14,7 @@ from .cloud import CloudAI
 from .analyzer import AIAnalyzer
 from .coder import CodeGenerator
 from .search import AISearch
+from .agent import AgentRoleConfig
 
 
 class AIManager(QObject):
@@ -213,21 +214,45 @@ class AIManager(QObject):
         """Override provider creation. Intended for tests."""
         self._provider_factory = factory
 
-    def create_completion_provider(self):
-        """Create a provider instance configured for an isolated agent turn."""
-        if not self.is_enabled:
-            return None
+    def available_model_options(self, provider_name: Optional[str] = None) -> list[str]:
+        """Return the built-in model picker options for a provider."""
+        provider = str(provider_name or self._configured_settings.get("provider", "local")).strip().lower()
+        if provider == "local":
+            return [
+                "qwen:7b",
+                "qwen:14b",
+                "llama3:8b",
+                "llama3:70b",
+                "mistral:7b",
+                "codellama:7b",
+                "phi3:14b",
+            ]
+        if provider == "anthropic":
+            return [
+                "claude-sonnet-4-20250514",
+                "claude-3-7-sonnet-latest",
+                "claude-3-5-sonnet-latest",
+                "claude-3-opus-20240229",
+            ]
+        if provider == "minimax":
+            return ["MiniMax-M2.5", "MiniMax-M1"]
+        if provider == "glm":
+            return ["glm-5", "glm-4.5", "glm-4.5-air", "glm-4.5-flash"]
+        return ["gpt-4o", "gpt-4.1", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
 
-        if callable(self._provider_factory):
-            return self._provider_factory()
+    def _provider_from_settings(
+        self,
+        provider_name: str,
+        *,
+        local_settings: Optional[Dict[str, Any]] = None,
+        cloud_settings: Optional[Dict[str, Any]] = None,
+    ):
+        """Instantiate a provider from normalized config settings."""
+        local_settings = local_settings or {}
+        cloud_settings = cloud_settings or {}
 
-        if self._current_ai is not None and not isinstance(self._current_ai, (LocalAI, CloudAI)):
-            return self._current_ai
-
-        provider_name = self._configured_settings.get("provider", "local")
         if provider_name == "local":
             provider = LocalAI()
-            local_settings = self._configured_settings.get("local", {})
             provider.configure(
                 endpoint=local_settings.get("endpoint", "http://localhost:11434"),
                 model=local_settings.get("model", "qwen:7b"),
@@ -237,10 +262,7 @@ class AIManager(QObject):
             )
             return provider
 
-        provider = CloudAI(provider=AIProvider.CLOUD_OPENAI)
-        cloud_settings = self._configured_settings.get("cloud", {})
-        actual_provider = cloud_settings.get("provider", provider_name)
-        if provider_name == "anthropic" or actual_provider == "anthropic":
+        if provider_name == "anthropic":
             provider = CloudAI(provider=AIProvider.CLOUD_ANTHROPIC)
             provider.configure(
                 provider="anthropic",
@@ -252,7 +274,8 @@ class AIManager(QObject):
                 timeout=cloud_settings.get("timeout", 60),
             )
             return provider
-        if provider_name == "minimax" or actual_provider == "minimax":
+
+        if provider_name == "minimax":
             provider = CloudAI(provider=AIProvider.CLOUD_MINIMAX)
             provider.configure(
                 provider="minimax",
@@ -264,7 +287,8 @@ class AIManager(QObject):
                 timeout=cloud_settings.get("timeout", 60),
             )
             return provider
-        if provider_name == "glm" or actual_provider == "glm":
+
+        if provider_name == "glm":
             provider = CloudAI(provider=AIProvider.CLOUD_GLM)
             provider.configure(
                 provider="glm",
@@ -277,6 +301,7 @@ class AIManager(QObject):
             )
             return provider
 
+        provider = CloudAI(provider=AIProvider.CLOUD_OPENAI)
         provider.configure(
             provider="openai",
             api_key=cloud_settings.get("api_key", ""),
@@ -287,6 +312,70 @@ class AIManager(QObject):
             timeout=cloud_settings.get("timeout", 60),
         )
         return provider
+
+    def create_completion_provider(self):
+        """Create a provider instance configured for an isolated agent turn."""
+        if not self.is_enabled:
+            return None
+
+        if callable(self._provider_factory):
+            try:
+                return self._provider_factory()
+            except TypeError:
+                return self._provider_factory(None)
+
+        if self._current_ai is not None and not isinstance(self._current_ai, (LocalAI, CloudAI)):
+            return self._current_ai
+
+        provider_name = self._configured_settings.get("provider", "local")
+        cloud_settings = deepcopy(self._configured_settings.get("cloud", {}))
+        actual_provider = str(cloud_settings.get("provider", provider_name)).strip().lower()
+        if provider_name != "local":
+            provider_name = actual_provider or provider_name
+        return self._provider_from_settings(
+            provider_name,
+            local_settings=deepcopy(self._configured_settings.get("local", {})),
+            cloud_settings=cloud_settings,
+        )
+
+    def create_completion_provider_for_config(self, config: Optional[AgentRoleConfig]):
+        """Create a provider instance that honors per-agent overrides."""
+        if not self.is_enabled:
+            return None
+
+        if callable(self._provider_factory):
+            try:
+                return self._provider_factory(config)
+            except TypeError:
+                return self._provider_factory()
+
+        role_config = config or AgentRoleConfig(
+            agent_id="primary",
+            label="Main Agent",
+            role="primary",
+            is_primary=True,
+        )
+        provider_name = str(role_config.provider or self._configured_settings.get("provider", "local")).strip().lower()
+        local_settings = deepcopy(self._configured_settings.get("local", {}))
+        cloud_settings = deepcopy(self._configured_settings.get("cloud", {}))
+
+        if provider_name == "local":
+            if role_config.model:
+                local_settings["model"] = role_config.model
+            if role_config.temperature is not None:
+                local_settings["temperature"] = role_config.temperature
+        else:
+            cloud_settings["provider"] = provider_name
+            if role_config.model:
+                cloud_settings["model"] = role_config.model
+            if role_config.temperature is not None:
+                cloud_settings["temperature"] = role_config.temperature
+
+        return self._provider_from_settings(
+            provider_name,
+            local_settings=local_settings,
+            cloud_settings=cloud_settings,
+        )
 
     def check_connection(self) -> bool:
         """Check connection to current provider."""

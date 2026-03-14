@@ -9,6 +9,8 @@ from typing import Optional, Dict, Any, List
 from enum import Enum, auto
 from dataclasses import dataclass, field
 
+from .agent import ProviderCapabilities
+
 
 class AIProvider(Enum):
     """AI provider enumeration."""
@@ -72,6 +74,11 @@ class AIBase(QObject):
     def provider_name(self) -> str:
         """Get provider name."""
         raise NotImplementedError
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        """Return provider capability flags."""
+        return ProviderCapabilities()
 
     def configure(self, **kwargs):
         """
@@ -157,6 +164,14 @@ class AIBase(QObject):
             Model response text
         """
         raise NotImplementedError
+
+    def complete_with_tools(
+        self,
+        messages: List[Dict[str, str]],
+        tools: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Optionally use provider-native tool calling."""
+        return None
 
     def chat(self, message: str, history: List[Dict[str, str]] = None) -> str:
         """

@@ -8,7 +8,14 @@ import time
 
 from PyQt6.QtTest import QTest
 
-from src.ai.agent import AgentRunner, AgentSession, ToolInvocation, ToolResult, ToolSpec
+from src.ai.agent import (
+    AgentRoleConfig,
+    AgentRunner,
+    AgentSession,
+    ToolInvocation,
+    ToolResult,
+    ToolSpec,
+)
 from src.app import OpenHexApp
 
 
@@ -53,6 +60,22 @@ class FakeManager:
 
     def create_completion_provider(self):
         return self._provider
+
+    def status_text(self):
+        return "FakeProvider · fake-model"
+
+
+class ConfigAwareFakeManager:
+    """Fake AI manager that returns a provider per agent config."""
+
+    def __init__(self, providers_by_agent_id):
+        self._providers_by_agent_id = dict(providers_by_agent_id)
+        self.requested_agent_ids = []
+        self.is_enabled = True
+
+    def create_completion_provider_for_config(self, config):
+        self.requested_agent_ids.append(config.agent_id)
+        return self._providers_by_agent_id[config.agent_id]
 
     def status_text(self):
         return "FakeProvider · fake-model"
@@ -335,3 +358,82 @@ def test_agent_runner_rejects_disabled_navigation_tools():
     assert messages[-1].content == "I will analyze without changing the UI selection."
     assert all(invocation.name != "select_range" for invocation in host.invocations)
     assert len(provider.calls) == 2
+
+
+def test_agent_runner_single_primary_agent_runs_direct_analysis():
+    """With only one enabled agent, the primary agent should answer directly."""
+    provider = FakeProvider(['{"type":"assistant","content":"Primary direct analysis."}'])
+    runner = AgentRunner(FakeManager(provider), FakeToolHost())
+    runner.set_agent_configs(
+        [
+            AgentRoleConfig(
+                agent_id="primary",
+                label="Main Agent",
+                role="primary",
+                is_primary=True,
+            ),
+            AgentRoleConfig(
+                agent_id="subagent_a",
+                label="Subagent A",
+                role="subagent",
+                enabled=False,
+            ),
+        ]
+    )
+
+    messages = runner.run_turn_sync(AgentSession(), "Analyze the packets")
+
+    assert [message.kind for message in messages] == ["user", "thinking", "assistant"]
+    assert messages[-1].content == "Primary direct analysis."
+    assert len(provider.calls) == 1
+
+
+def test_agent_runner_multi_agent_routes_subagent_findings_to_primary():
+    """With multiple enabled agents, sub-agents should run first and the primary should synthesize."""
+    primary_provider = FakeProvider(['{"type":"assistant","content":"Primary consensus."}'])
+    subagent_provider = FakeProvider(['{"type":"assistant","content":"Subagent evidence summary."}'])
+    manager = ConfigAwareFakeManager(
+        {
+            "primary": primary_provider,
+            "subagent_a": subagent_provider,
+        }
+    )
+    runner = AgentRunner(manager, FakeToolHost())
+    runner.set_agent_configs(
+        [
+            AgentRoleConfig(
+                agent_id="primary",
+                label="Main Agent",
+                role="primary",
+                is_primary=True,
+            ),
+            AgentRoleConfig(
+                agent_id="subagent_a",
+                label="Subagent A",
+                role="subagent",
+                enabled=True,
+            ),
+        ]
+    )
+
+    messages = runner.run_turn_sync(AgentSession(), "Infer unknown fields")
+
+    assert manager.requested_agent_ids == ["subagent_a", "primary"]
+    assert any(
+        message.kind == "assistant"
+        and message.metadata.get("channel") == "subagent_a"
+        and message.content == "Subagent evidence summary."
+        for message in messages
+    )
+    assert any(
+        message.kind == "assistant"
+        and message.metadata.get("channel") == "consensus"
+        and message.content == "Primary consensus."
+        for message in messages
+    )
+    primary_call_messages = primary_provider.calls[0]
+    assert any(
+        "Sub-agent findings" in entry.get("content", "")
+        for entry in primary_call_messages
+        if entry.get("role") == "system"
+    )

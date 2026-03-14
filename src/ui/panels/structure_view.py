@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -36,6 +35,148 @@ from ...utils.i18n import tr
 from ..design_system import CHROME, MONO_FONT_FAMILY, build_mono_font, input_surface_qss, panel_surface_qss, table_surface_qss
 
 
+STRUCTURE_DIALOG_BUTTON_HEIGHT = 28
+STRUCTURE_DIALOG_ACTION_WIDTH = 96
+STRUCTURE_DIALOG_PRIMARY_WIDTH = 102
+
+
+def _build_structure_dialog_stylesheet(dialog_selector: str) -> str:
+    """Return dialog-local chrome for structure config management surfaces."""
+    return f"""
+        {dialog_selector} {{
+            background-color: {CHROME.workspace_bg};
+            color: {CHROME.text_primary};
+        }}
+        {dialog_selector} QLabel {{
+            background: transparent;
+            border: none;
+        }}
+        {dialog_selector} QFrame#structureDialogCard {{
+            background-color: {CHROME.surface};
+            border: 1px solid {CHROME.border};
+            border-radius: 13px;
+        }}
+        {dialog_selector} QFrame#structureListFrame {{
+            background-color: {CHROME.surface_alt};
+            border: 1px solid {CHROME.border};
+            border-radius: 10px;
+        }}
+        {dialog_selector} QLabel#structureDialogSectionLabel {{
+            color: {CHROME.text_secondary};
+            font-size: 10px;
+            font-weight: 700;
+        }}
+        {dialog_selector} QLabel#structureDialogSectionTitle {{
+            color: {CHROME.text_primary};
+            font-size: 11px;
+            font-weight: 700;
+        }}
+        {dialog_selector} QLabel#structureCountBadge {{
+            background-color: {CHROME.surface_raised};
+            color: {CHROME.text_primary};
+            border: 1px solid {CHROME.border_strong};
+            border-radius: 6px;
+            padding: 0 5px;
+            min-width: 10px;
+            min-height: 16px;
+            font-size: 8px;
+            font-weight: 700;
+        }}
+        {dialog_selector} QLineEdit#structureNameEdit,
+        {dialog_selector} QPlainTextEdit#structureDefinitionEdit {{
+            background-color: {CHROME.surface_alt};
+            color: {CHROME.text_primary};
+            border: 1px solid {CHROME.border};
+            border-radius: 10px;
+            padding: 6px 10px;
+        }}
+        {dialog_selector} QPlainTextEdit#structureDefinitionEdit {{
+            padding: 9px 10px;
+            selection-background-color: {CHROME.accent};
+            font-family: {MONO_FONT_FAMILY};
+        }}
+        {dialog_selector} QLineEdit#structureNameEdit:hover,
+        {dialog_selector} QPlainTextEdit#structureDefinitionEdit:hover {{
+            border-color: {CHROME.border_strong};
+        }}
+        {dialog_selector} QLineEdit#structureNameEdit:focus,
+        {dialog_selector} QPlainTextEdit#structureDefinitionEdit:focus {{
+            border-color: {CHROME.accent};
+        }}
+        {dialog_selector} QListWidget#structureConfigList {{
+            background: transparent;
+            color: {CHROME.text_primary};
+            border: none;
+            padding: 0;
+            outline: 0;
+        }}
+        {dialog_selector} QListWidget#structureConfigList::item {{
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin: 2px 0;
+        }}
+        {dialog_selector} QListWidget#structureConfigList::item:hover {{
+            background-color: {CHROME.surface_hover};
+        }}
+        {dialog_selector} QListWidget#structureConfigList::item:selected {{
+            background-color: {CHROME.accent_surface};
+            color: {CHROME.text_primary};
+            border: 1px solid {CHROME.accent_surface_strong};
+        }}
+        {dialog_selector} QPushButton#structureSecondaryButton,
+        {dialog_selector} QPushButton#structureDangerButton,
+        {dialog_selector} QPushButton#structurePrimaryButton {{
+            border-radius: 8px;
+            padding: 4px 12px;
+            min-height: {STRUCTURE_DIALOG_BUTTON_HEIGHT}px;
+            font-size: 10px;
+            font-weight: 600;
+        }}
+        {dialog_selector} QPushButton#structureSecondaryButton {{
+            background-color: {CHROME.surface_raised};
+            color: {CHROME.text_primary};
+            border: 1px solid {CHROME.border_strong};
+        }}
+        {dialog_selector} QPushButton#structureSecondaryButton:hover {{
+            background-color: {CHROME.surface_hover};
+        }}
+        {dialog_selector} QPushButton#structureSecondaryButton:disabled {{
+            background-color: {CHROME.surface};
+            color: {CHROME.text_muted};
+            border-color: {CHROME.border};
+        }}
+        {dialog_selector} QPushButton#structureDangerButton {{
+            background-color: #3C2428;
+            color: {CHROME.text_primary};
+            border: 1px solid #6A434A;
+        }}
+        {dialog_selector} QPushButton#structureDangerButton:hover {{
+            background-color: #4A2B30;
+            border-color: #83515A;
+        }}
+        {dialog_selector} QPushButton#structureDangerButton:disabled {{
+            background-color: {CHROME.surface};
+            color: {CHROME.text_muted};
+            border-color: {CHROME.border};
+        }}
+        {dialog_selector} QPushButton#structurePrimaryButton {{
+            background-color: {CHROME.accent_surface};
+            color: {CHROME.text_primary};
+            border: 1px solid {CHROME.accent_surface_strong};
+            font-weight: 700;
+        }}
+        {dialog_selector} QPushButton#structurePrimaryButton:hover {{
+            background-color: {CHROME.accent_surface_strong};
+            border-color: {CHROME.accent_hover};
+        }}
+        {dialog_selector} QPushButton#structurePrimaryButton:disabled {{
+            background-color: {CHROME.surface_raised};
+            color: {CHROME.text_muted};
+            border-color: {CHROME.border};
+        }}
+    """
+
+
 class NewStructureConfigDialog(QDialog):
     """Dialog for creating a new structure parsing config."""
 
@@ -48,7 +189,11 @@ class NewStructureConfigDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(title or tr("panel_structure_new_title"))
+        self.setObjectName("structureConfigEditDialog")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(_build_structure_dialog_stylesheet("QDialog#structureConfigEditDialog"))
         self.resize(520, 360)
+        self.setMinimumSize(480, 320)
         self._initial_name = initial_name
         self._initial_definition = initial_definition
         self._init_ui()
@@ -56,46 +201,60 @@ class NewStructureConfigDialog(QDialog):
     def _init_ui(self):
         """Build the dialog layout."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        layout.addWidget(QLabel(tr("panel_structure_name")))
+        form_card = QFrame(self)
+        form_card.setObjectName("structureDialogCard")
+        form_layout = QVBoxLayout()
+        form_layout.setContentsMargins(14, 14, 14, 14)
+        form_layout.setSpacing(10)
+
+        name_label = QLabel(tr("panel_structure_name"))
+        name_label.setObjectName("structureDialogSectionLabel")
+        form_layout.addWidget(name_label)
+
         self._name_edit = QLineEdit()
+        self._name_edit.setObjectName("structureNameEdit")
         self._name_edit.setPlaceholderText(tr("panel_structure_name_placeholder"))
         self._name_edit.setText(self._initial_name)
-        layout.addWidget(self._name_edit)
+        form_layout.addWidget(self._name_edit)
 
-        layout.addWidget(QLabel(tr("panel_structure_definition")))
+        definition_label = QLabel(tr("panel_structure_definition"))
+        definition_label.setObjectName("structureDialogSectionLabel")
+        form_layout.addWidget(definition_label)
+
         self._definition_edit = QPlainTextEdit()
+        self._definition_edit.setObjectName("structureDefinitionEdit")
         self._definition_edit.setPlaceholderText(tr("panel_structure_definition_placeholder"))
         self._definition_edit.setPlainText(self._initial_definition)
-        self._definition_edit.setStyleSheet(f"""
-            QPlainTextEdit {{
-                background-color: {CHROME.surface_alt};
-                color: {CHROME.text_primary};
-                border: 1px solid {CHROME.border};
-                border-radius: 12px;
-                font-family: {MONO_FONT_FAMILY};
-                padding: 8px 10px;
-            }}
-            QPlainTextEdit:focus {{
-                border-color: {CHROME.accent};
-            }}
-        """)
-        layout.addWidget(self._definition_edit, 1)
+        self._definition_edit.setFont(build_mono_font(11))
+        form_layout.addWidget(self._definition_edit, 1)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        if ok_button is not None:
-            ok_button.setText(tr("panel_structure_confirm"))
-        if cancel_button is not None:
-            cancel_button.setText(tr("panel_structure_cancel"))
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        form_card.setLayout(form_layout)
+        layout.addWidget(form_card, 1)
+
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(8)
+        footer.addStretch()
+
+        self._cancel_button = QPushButton(tr("panel_structure_cancel"))
+        self._cancel_button.setObjectName("structureSecondaryButton")
+        self._cancel_button.setMinimumWidth(STRUCTURE_DIALOG_ACTION_WIDTH)
+        self._cancel_button.setMinimumHeight(STRUCTURE_DIALOG_BUTTON_HEIGHT)
+        self._cancel_button.clicked.connect(self.reject)
+        footer.addWidget(self._cancel_button)
+
+        self._confirm_button = QPushButton(tr("panel_structure_confirm"))
+        self._confirm_button.setObjectName("structurePrimaryButton")
+        self._confirm_button.setMinimumWidth(STRUCTURE_DIALOG_PRIMARY_WIDTH)
+        self._confirm_button.setMinimumHeight(STRUCTURE_DIALOG_BUTTON_HEIGHT)
+        self._confirm_button.setDefault(True)
+        self._confirm_button.clicked.connect(self.accept)
+        footer.addWidget(self._confirm_button)
+
+        layout.addLayout(footer)
 
         self.setLayout(layout)
 
@@ -115,60 +274,89 @@ class StructureConfigManagerDialog(QDialog):
         super().__init__(parent or panel)
         self._panel = panel
         self.setWindowTitle(tr("panel_structure_manage_title"))
-        self.resize(520, 380)
+        self.setObjectName("structureConfigManagerDialog")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(_build_structure_dialog_stylesheet("QDialog#structureConfigManagerDialog"))
+        self.resize(520, 372)
+        self.setMinimumSize(480, 332)
         self._init_ui()
         self.refresh()
 
     def _init_ui(self):
         """Build the manager dialog layout."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        layout.addWidget(QLabel(tr("panel_structure_manage_saved")))
+        card = QFrame(self)
+        card.setObjectName("structureDialogCard")
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(14, 14, 14, 14)
+        card_layout.setSpacing(10)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
+        section_label = QLabel(tr("panel_structure_manage_saved"))
+        section_label.setObjectName("structureDialogSectionTitle")
+        title_row.addWidget(section_label)
+        title_row.addStretch()
+
+        self._count_badge = QLabel("0")
+        self._count_badge.setObjectName("structureCountBadge")
+        title_row.addWidget(self._count_badge)
+        card_layout.addLayout(title_row)
+
+        list_frame = QFrame(self)
+        list_frame.setObjectName("structureListFrame")
+        list_layout = QVBoxLayout()
+        list_layout.setContentsMargins(7, 7, 7, 7)
+        list_layout.setSpacing(0)
 
         self._config_list = QListWidget()
+        self._config_list.setObjectName("structureConfigList")
         self._config_list.itemDoubleClicked.connect(self._on_edit_clicked)
         self._config_list.currentItemChanged.connect(self._on_selection_changed)
-        self._config_list.setStyleSheet(f"""
-            QListWidget {{
-                background-color: {CHROME.surface_alt};
-                color: {CHROME.text_primary};
-                border: 1px solid {CHROME.border};
-                border-radius: 12px;
-                padding: 6px;
-            }}
-            QListWidget::item {{
-                border-radius: 8px;
-                padding: 8px 10px;
-            }}
-            QListWidget::item:selected {{
-                background-color: {CHROME.accent_surface};
-            }}
-        """)
-        layout.addWidget(self._config_list, 1)
+        list_layout.addWidget(self._config_list)
+        list_frame.setLayout(list_layout)
+        card_layout.addWidget(list_frame, 1)
 
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(8)
 
         self._edit_button = QPushButton(tr("panel_structure_edit"))
+        self._edit_button.setObjectName("structureSecondaryButton")
+        self._edit_button.setMinimumWidth(STRUCTURE_DIALOG_ACTION_WIDTH)
+        self._edit_button.setMinimumHeight(STRUCTURE_DIALOG_BUTTON_HEIGHT)
         self._edit_button.clicked.connect(self._on_edit_clicked)
         button_row.addWidget(self._edit_button)
 
         self._delete_button = QPushButton(tr("panel_structure_delete"))
+        self._delete_button.setObjectName("structureDangerButton")
+        self._delete_button.setMinimumWidth(STRUCTURE_DIALOG_ACTION_WIDTH)
+        self._delete_button.setMinimumHeight(STRUCTURE_DIALOG_BUTTON_HEIGHT)
         self._delete_button.clicked.connect(self._on_delete_clicked)
         button_row.addWidget(self._delete_button)
         button_row.addStretch()
-        layout.addLayout(button_row)
+        card_layout.addLayout(button_row)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        close_button = buttons.button(QDialogButtonBox.StandardButton.Close)
-        if close_button is not None:
-            close_button.setText(tr("btn_close"))
-        buttons.rejected.connect(self.reject)
-        buttons.accepted.connect(self.accept)
-        layout.addWidget(buttons)
+        card.setLayout(card_layout)
+        layout.addWidget(card, 1)
+
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(8)
+        footer.addStretch()
+
+        self._close_button = QPushButton(tr("btn_close"))
+        self._close_button.setObjectName("structurePrimaryButton")
+        self._close_button.setMinimumWidth(STRUCTURE_DIALOG_PRIMARY_WIDTH)
+        self._close_button.setMinimumHeight(STRUCTURE_DIALOG_BUTTON_HEIGHT)
+        self._close_button.clicked.connect(self.reject)
+        footer.addWidget(self._close_button)
+
+        layout.addLayout(footer)
 
         self.setLayout(layout)
 
@@ -184,6 +372,7 @@ class StructureConfigManagerDialog(QDialog):
             item = QListWidgetItem(str(config["name"]))
             item.setData(Qt.ItemDataRole.UserRole, str(config["name"]))
             self._config_list.addItem(item)
+        self._count_badge.setText(str(self._config_list.count()))
 
         if self._config_list.count():
             target_name = selected_name or self._panel.selected_config_name()

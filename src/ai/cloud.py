@@ -7,8 +7,10 @@ Cloud API integration for OpenAI and Anthropic.
 from PyQt6.QtCore import QObject, pyqtSignal
 from typing import Optional, Dict, Any, List
 import httpx
+import json
 
 from .base import AIBase, AISettings, AIProvider
+from .agent import ProviderCapabilities
 
 
 class CloudAI(AIBase):
@@ -55,6 +57,14 @@ class CloudAI(AIBase):
     @property
     def provider(self) -> AIProvider:
         return self._provider
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        """OpenAI-compatible providers can use native function calling."""
+        return ProviderCapabilities(
+            native_tools=self._is_openai_compatible(),
+            reasoning_summary=self._provider == AIProvider.CLOUD_MINIMAX,
+        )
 
     def check_availability(self) -> bool:
         """Check if cloud API is available."""
@@ -147,6 +157,71 @@ class CloudAI(AIBase):
     def complete(self, messages: List[Dict[str, str]]) -> str:
         """Complete a chat-style request."""
         return self._send_request(messages)
+
+    def complete_with_tools(
+        self,
+        messages: List[Dict[str, str]],
+        tools: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Use provider-native tool calling when supported."""
+        if not self._is_openai_compatible() or not tools:
+            return None
+
+        self.thinking_started.emit()
+        try:
+            url = self._get_api_url()
+            headers = self._get_headers()
+            payload = self._build_payload(messages, stream=False)
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+            with httpx.Client(timeout=self._settings.timeout) as client:
+                response = client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as e:
+            error_msg = self._format_http_error(e)
+            self.error_occurred.emit(error_msg)
+            self.thinking_finished.emit()
+            return {"type": "assistant", "content": f"Error: {error_msg}"}
+        except Exception as e:
+            error_msg = str(e)
+            self.error_occurred.emit(error_msg)
+            self.thinking_finished.emit()
+            return {"type": "assistant", "content": f"Error: {error_msg}"}
+
+        self.thinking_finished.emit()
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {}) or {}
+
+        if "usage" in data:
+            self._usage = data["usage"]
+            self.usage_reported.emit(data["usage"])
+
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls:
+            tool_call = tool_calls[0]
+            function_payload = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+            name = str(function_payload.get("name", "")).strip()
+            arguments_text = function_payload.get("arguments", "{}")
+            try:
+                arguments = json.loads(arguments_text) if isinstance(arguments_text, str) else dict(arguments_text or {})
+            except Exception:
+                arguments = {}
+            return {
+                "type": "tool_call",
+                "tool_name": name,
+                "arguments": arguments if isinstance(arguments, dict) else {},
+            }
+
+        content = message.get("content", "")
+        if isinstance(content, list):
+            content = "".join(
+                item.get("text", "") if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        self._last_response = str(content or "")
+        return {"type": "assistant", "content": self._last_response}
 
     def _prepare_messages(self, messages: List[Dict[str, str]]) -> tuple[List[Dict[str, str]], str]:
         """Normalize chat messages for providers that are stricter than OpenAI."""

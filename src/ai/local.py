@@ -10,6 +10,7 @@ import json
 import httpx
 
 from .base import AIBase, AISettings, AIProvider
+from .agent import ProviderCapabilities
 
 
 class LocalAIWorker(QThread):
@@ -85,6 +86,11 @@ class LocalAI(AIBase):
     @property
     def provider_name(self) -> str:
         return "Local LLM"
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        """Local prompt-based models use the JSON fallback tool loop."""
+        return ProviderCapabilities(native_tools=False, reasoning_summary=False)
 
     @property
     def endpoint(self) -> str:
